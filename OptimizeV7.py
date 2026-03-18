@@ -839,15 +839,14 @@ class OptimizeV7Results:
                             'id': id,
                             'view': False,
                             'adg': get_metric_value("adg_usd"),
-                            'mdg': get_metric_value("mdg_usd"),
+                            'omega_ratio': get_metric_value("omega_ratio_usd"),
                             'drawdown_worst': get_metric_value("drawdown_worst_usd"),
+                            'peak_recovery_hours': get_metric_value("peak_recovery_hours_equity_usd"),
                             'ulcer_index': get_metric_value("ulcer_index_usd"),
                             'adg_over_ui': get_metric_value("adg_over_ui_usd"),
                             'gain_over_ui': get_metric_value("gain_over_ui_usd"),
                             'gain': get_metric_value("gain_usd"),
                             'total_wallet_exposure_mean': get_metric_value("total_wallet_exposure_mean"),
-                            'loss_profit_ratio': get_metric_value("loss_profit_ratio"),
-                            'position_held_hours_max': get_metric_value("position_held_hours_max"),
                             'sharpe_ratio': get_metric_value("sharpe_ratio_usd"),
                             'Name': name,
                             'file': pareto["index_filename"],
@@ -866,15 +865,14 @@ class OptimizeV7Results:
                             'id': id,
                             'view': False,
                             'adg': get_stat_value("adg_usd"),
-                            'mdg': get_stat_value("mdg_usd"),
+                            'omega_ratio': get_stat_value("omega_ratio_usd"),
                             'drawdown_worst': get_stat_value("drawdown_worst_usd"),
+                            'peak_recovery_hours': get_stat_value("peak_recovery_hours_equity_usd"),
                             'ulcer_index': get_stat_value("ulcer_index_usd"),
                             'adg_over_ui': get_stat_value("adg_over_ui_usd"),
                             'gain_over_ui': get_stat_value("gain_over_ui_usd"),
                             'gain': get_stat_value("gain_usd"),
                             'total_wallet_exposure_mean': get_stat_value("total_wallet_exposure_mean"),
-                            'loss_profit_ratio': get_stat_value("loss_profit_ratio"),
-                            'position_held_hours_max': get_stat_value("position_held_hours_max"),
                             'sharpe_ratio': get_stat_value("sharpe_ratio_usd"),
                             'Name': name,
                             'file': pareto["index_filename"],
@@ -886,30 +884,31 @@ class OptimizeV7Results:
                             analysis = pareto["analyses_combined"]
                             # Support both old format (_max suffix) and new format (_mean suffix)
                             adg = analysis.get("adg_max", analysis.get("adg_mean", 0))
-                            mdg = analysis.get("mdg_max", analysis.get("mdg_mean", 0))
+                            omega_ratio = analysis.get("omega_ratio_max", analysis.get("omega_ratio_mean", 0))
                             drawdown_worst = analysis.get("drawdown_worst_max", analysis.get("drawdown_worst_mean", 0))
+                            peak_recovery_hours = analysis.get(
+                                "peak_recovery_hours_equity_max",
+                                analysis.get("peak_recovery_hours_equity_mean", 0),
+                            )
                             ulcer_index = analysis.get("ulcer_index_max", analysis.get("ulcer_index_mean", 0))
                             adg_over_ui = analysis.get("adg_over_ui_max", analysis.get("adg_over_ui_mean", 0))
                             gain_over_ui = analysis.get("gain_over_ui_max", analysis.get("gain_over_ui_mean", 0))
                             gain = analysis.get("gain_max", analysis.get("gain_mean", 0))
                             total_wallet_exposure_mean = analysis.get("total_wallet_exposure_mean_max", analysis.get("total_wallet_exposure_mean_mean", 0))
-                            loss_profit_ratio = analysis.get("loss_profit_ratio_max", analysis.get("loss_profit_ratio_mean", 0))
-                            position_held_hours_max = analysis.get("position_held_hours_max_max", analysis.get("position_held_hours_max_mean", 0))
                             sharpe_ratio = analysis.get("sharpe_ratio_max", analysis.get("sharpe_ratio_mean", 0))
                             d.append({
                                 'Select': False,
                                 'id': id,
                                 'view': False,
                                 'adg': adg,
-                                'mdg': mdg,
+                                'omega_ratio': omega_ratio,
                                 'drawdown_worst': drawdown_worst,
+                                'peak_recovery_hours': peak_recovery_hours,
                                 'ulcer_index': ulcer_index,
                                 'adg_over_ui': adg_over_ui,
                                 'gain_over_ui': gain_over_ui,
                                 'gain': gain,
                                 'total_wallet_exposure_mean': total_wallet_exposure_mean,
-                                'loss_profit_ratio': loss_profit_ratio,
-                                'position_held_hours_max': position_held_hours_max,
                                 'sharpe_ratio': sharpe_ratio,
                                 'Name': name,
                                 'file': pareto["index_filename"],
@@ -923,15 +922,14 @@ class OptimizeV7Results:
                                     'id': id,
                                     'view': False,
                                     'adg': analysis["adg"],
-                                    'mdg': analysis["mdg"],
+                                    'omega_ratio': analysis.get("omega_ratio", 0),
                                     'drawdown_worst': analysis["drawdown_worst"],
+                                    'peak_recovery_hours': analysis.get("peak_recovery_hours_equity", 0),
                                     'ulcer_index': analysis.get("ulcer_index", 0),
                                     'adg_over_ui': analysis.get("adg_over_ui", 0),
                                     'gain_over_ui': analysis.get("gain_over_ui", 0),
                                     'gain': analysis["gain"],
                                     'total_wallet_exposure_mean': analysis.get("total_wallet_exposure_mean", 0),
-                                    'loss_profit_ratio': analysis["loss_profit_ratio"],
-                                    'position_held_hours_max': analysis["position_held_hours_max"],
                                     'sharpe_ratio': analysis["sharpe_ratio"],
                                     'Name': name,
                                     'file': pareto["index_filename"],
