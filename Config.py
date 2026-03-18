@@ -27,6 +27,7 @@ METRIC_GROUP_ORDER = [
     "Ratios & Efficiency",
     "Position & Execution Metrics",
     "Equity Curve Quality",
+    "Exposure Metrics",
     "Other",
 ]
 
@@ -38,6 +39,7 @@ METRIC_GROUP_DESCRIPTIONS: dict[str, str] = {
     "Ratios & Efficiency": "Risk-adjusted and efficiency ratios (Sharpe/Sortino/Omega/Calmar/Sterling, loss-profit).",
     "Position & Execution Metrics": "Trading activity and holding/execution characteristics (positions/day, hold times, volume, recovery).",
     "Equity Curve Quality": "Equity curve smoothness/fit quality (choppiness, jerkiness, exponential fit error).",
+    "Exposure Metrics": "Exposure usage and time-at-exposure metrics.",
     "Other": "Miscellaneous metrics.",
 }
 
@@ -131,6 +133,11 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=True,
         description="Mean of worst 1% daily drawdowns.",
     ),
+    "ulcer_index": MetricDef(
+        group="Risk Metrics",
+        has_currency=True,
+        description="Root-mean-square drawdown from the running equity peak (lower is better).",
+    ),
     "expected_shortfall_1pct": MetricDef(
         group="Risk Metrics",
         has_currency=True,
@@ -187,6 +194,16 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=True,
         weighted_variant="calmar_ratio_w",
         description="Return divided by maximum drawdown (plus weighted variant).",
+    ),
+    "adg_over_ui": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        description="Average daily gain divided by ulcer index (higher is better; can be sensitive when UI is near zero).",
+    ),
+    "gain_over_ui": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        description="Total gain divided by ulcer index (higher is better; can be sensitive when UI is near zero).",
     ),
     "loss_profit_ratio": MetricDef(
         group="Ratios & Efficiency",
@@ -291,6 +308,11 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         group="Exposure Metrics",
         has_currency=False,
         description="Maximum consecutive hours with short position above high exposure threshold.",
+    ),
+    "total_wallet_exposure_mean": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Average total wallet exposure over the run (lower is generally safer).",
     ),
 }
 
@@ -489,14 +511,14 @@ def get_aggregate_metrics():
     """Get list of metrics commonly used for suite aggregation (with currency suffixes)."""
     metrics = []
     # Add currency metrics with both suffixes
-    for m in ["adg", "adg_w", "mdg", "mdg_w", "drawdown_worst", "drawdown_worst_mean_1pct", "gain"]:
+    for m in ["adg", "adg_w", "mdg", "mdg_w", "drawdown_worst", "drawdown_worst_mean_1pct", "gain", "ulcer_index", "adg_over_ui", "gain_over_ui"]:
         if m in CURRENCY_METRICS:
             metrics.extend([f"{m}_usd", f"{m}_btc"])
     # Add shared metrics that don't need suffixes
     for m in ["sharpe_ratio", "sharpe_ratio_w", "sortino_ratio", "sortino_ratio_w", 
               "loss_profit_ratio", "loss_profit_ratio_w", "positions_held_per_day",
               "position_held_hours_max", "position_held_hours_mean", "position_held_hours_median",
-              "position_unchanged_hours_max", "peak_recovery_hours_pnl"]:
+              "position_unchanged_hours_max", "peak_recovery_hours_pnl", "total_wallet_exposure_mean"]:
         if m in SHARED_METRICS:
             metrics.append(m)
     # Add ratio metrics with currency suffixes
@@ -8008,4 +8030,3 @@ class BalanceCalculator:
             st.write(f"**Calculation:** `{min_order_price} / (({bot_side.total_wallet_exposure_limit} / {bot_side.n_positions}) * {bot_side.entry_initial_qty_pct}) = {result:.2f}`")
             recommended_balance = math.ceil(result * 1.1 / 10) * 10
             st.write(f"### Recommended Balance (10% more): :green[{int(recommended_balance)} USDT]")
-

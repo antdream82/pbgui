@@ -542,6 +542,9 @@ class ParetoExplorer:
                 'sharpe_ratio_usd': "Risk-adjusted return metric - Higher is better. Measures excess return per unit of risk",
                 'sharpe_ratio_w_usd': "Weighted Sharpe Ratio - Risk-adjusted return accounting for wallet exposure",
                 'gain_usd': "Total profit multiplier - How many times the initial balance was gained",
+                'ulcer_index_usd': "Ulcer Index - Lower is better. RMS drawdown from the running equity peak",
+                'adg_over_ui_usd': "ADG divided by Ulcer Index - Higher is better, but can be very sensitive when UI is near zero",
+                'gain_over_ui_usd': "Gain divided by Ulcer Index - Higher is better, but can be very sensitive when UI is near zero",
                 'calmar_ratio_usd': "Return vs maximum drawdown - Higher is better. Measures profit relative to worst loss",
                 'calmar_ratio_w_usd': "Weighted Calmar Ratio - Return vs maximum drawdown accounting for wallet exposure",
                 'sortino_ratio_usd': "Downside risk-adjusted return - Like Sharpe but only penalizes downside volatility",
@@ -551,6 +554,7 @@ class ParetoExplorer:
                 'sterling_ratio_usd': "Return vs average drawdown - Consistency of returns relative to typical losses",
                 'sterling_ratio_w_usd': "Weighted Sterling Ratio - Return vs average drawdown accounting for wallet exposure",
                 'drawdown_worst_usd': "Maximum portfolio decline - Lower is better. Worst equity drop from peak",
+                'total_wallet_exposure_mean': "Average total wallet exposure over the run - Lower is generally safer and leaves more idle capital available",
             }
             
             # Convert scoring metrics to weighted/unweighted versions
@@ -2433,11 +2437,15 @@ class ParetoExplorer:
             'sharpe_ratio_usd': "Risk-adjusted return metric - Higher is better. Measures excess return per unit of risk",
             'sharpe_ratio_w_usd': "Weighted Sharpe Ratio - Risk-adjusted return accounting for wallet exposure",
             'gain_usd': "Total profit multiplier - How many times the initial balance was gained",
+            'ulcer_index_usd': "Ulcer Index - Lower is better. RMS drawdown from the running equity peak",
+            'adg_over_ui_usd': "ADG divided by Ulcer Index - Higher is better, but can be very sensitive when UI is near zero",
+            'gain_over_ui_usd': "Gain divided by Ulcer Index - Higher is better, but can be very sensitive when UI is near zero",
             'calmar_ratio_usd': "Return vs maximum drawdown - Higher is better. Measures profit relative to worst loss",
             'sortino_ratio_usd': "Downside risk-adjusted return - Like Sharpe but only penalizes downside volatility",
             'omega_ratio_usd': "Probability-weighted ratio of gains vs losses - Higher is better",
             'sterling_ratio_usd': "Return vs average drawdown - Consistency of returns relative to typical losses",
             'drawdown_worst_usd': "Maximum portfolio decline - Lower is better. Worst equity drop from peak",
+            'total_wallet_exposure_mean': "Average total wallet exposure over the run - Lower is generally safer and leaves more idle capital available",
         }
         
         # Display metrics based on Top Performers selection or fallback to scoring metrics
@@ -4090,12 +4098,16 @@ class ParetoExplorer:
                     # Define metrics to check (name, maximize/minimize, need_currency, label_format)
                     metric_defs = [
                         ('adg', True, True, 'Top ADG', '.6f'),
+                        ('adg_over_ui', True, True, 'Top ADG/UI', '.3f'),
                         ('sharpe_ratio', True, True, 'Top Sharpe', '.3f'),
+                        ('ulcer_index', False, True, 'Best UI', '.4f'),
                         ('drawdown_worst', False, True, 'Best DD', '.4f'),  # minimize
                         ('calmar_ratio', True, True, 'Top Calmar', '.3f'),
                         ('sortino_ratio', True, True, 'Top Sortino', '.3f'),
                         ('omega_ratio', True, True, 'Top Omega', '.3f'),
                         ('gain', True, True, 'Top Gain', '.2f'),
+                        ('gain_over_ui', True, True, 'Top Gain/UI', '.3f'),
+                        ('total_wallet_exposure_mean', False, False, 'Low Avg TWE', '.3f'),
                         ('loss_profit_ratio', False, False, 'Best L/P', '.3f'),  # minimize, shared metric
                         ('position_held_hours_mean', False, False, 'Fast Trade', '.1f'),  # minimize
                         ('volume_pct_per_day_avg', True, False, 'Top Volume', '.2f'),  # shared metric

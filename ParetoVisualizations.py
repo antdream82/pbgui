@@ -562,7 +562,7 @@ class ParetoVisualizations:
         if metrics is None:
             metrics = self.loader.scoring_metrics
             if not metrics:
-                metrics = ['adg_w_usd', 'sharpe_ratio_usd', 'gain_usd', 'drawdown_worst_usd']
+                metrics = ['adg_w_usd', 'sharpe_ratio_usd', 'gain_usd', 'drawdown_worst_usd', 'adg_over_ui_usd', 'ulcer_index_usd']
         
         # Filter available metrics
         metrics = [m for m in metrics if m in df.columns]
