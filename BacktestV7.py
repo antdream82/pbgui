@@ -1543,6 +1543,9 @@ class BacktestV7Result:
             self.adg = self.result.get("adg_usd") or self.result.get("adg", 0)
             self.drawdown_worst = self.result.get("drawdown_worst_usd") or self.result.get("drawdown_worst", 0)
             self.sharpe_ratio = self.result.get("sharpe_ratio_usd") or self.result.get("sharpe_ratio", 0)
+            self.ulcer_index = self.result.get("ulcer_index_usd") or self.result.get("ulcer_index", 0)
+            self.adg_over_ui = self.result.get("adg_over_ui_usd") or self.result.get("adg_over_ui", 0)
+            self.gain_over_ui = self.result.get("gain_over_ui_usd") or self.result.get("gain_over_ui", 0)
             # safe read: prefer numeric value, fallback to None if missing/invalid
             self.equity_balance_diff_neg_max = None
             val = self.result.get("equity_balance_diff_neg_max_usd") or self.result.get("equity_balance_diff_neg_max")
@@ -1556,6 +1559,9 @@ class BacktestV7Result:
             self.adg = 0
             self.drawdown_worst = 0
             self.sharpe_ratio = 0
+            self.ulcer_index = 0
+            self.adg_over_ui = 0
+            self.gain_over_ui = 0
             self.equity_balance_diff_neg_max = None
         self.be = None
         gain = 0.0
@@ -2503,6 +2509,9 @@ class BacktestV7Results:
                     'Gain': float(f"{gain:.2f}"),
                     'Drawdown Worst': float(f"{result.drawdown_worst:.4f}"),
                     'Sharpe Ratio': float(f"{result.sharpe_ratio:.4f}"),
+                    'Ulcer Index': float(f"{result.ulcer_index:.4f}"),
+                    'ADG/UI': float(f"{result.adg_over_ui:.4f}"),
+                    'Gain/UI': float(f"{result.gain_over_ui:.4f}"),
                     'Starting Balance': float(f"{starting_balance_float:.0f}"),
                     'Final Balance': float(f"{final_balance_float:.0f}"),
                     'Final Balance BTC': float(result.final_balance_btc) if result.final_balance_btc is not None else 0,
@@ -2523,6 +2532,9 @@ class BacktestV7Results:
             'Gain': st.column_config.NumberColumn(label="Gain", format="%.2f"),
             'Drawdown Worst': st.column_config.NumberColumn(label="Worst DD", format="%.4f"),
             'Sharpe Ratio': st.column_config.NumberColumn(label="Sharpe", format="%.4f"),
+            'Ulcer Index': st.column_config.NumberColumn(label="UI", format="%.4f"),
+            'ADG/UI': st.column_config.NumberColumn(label="ADG/UI", format="%.4f"),
+            'Gain/UI': st.column_config.NumberColumn(label="Gain/UI", format="%.4f"),
             'Starting Balance': st.column_config.NumberColumn(label="Start B."),
             'Final Balance': st.column_config.NumberColumn(label="Final B."),
             'Final Balance BTC': st.column_config.NumberColumn(label="Final B. BTC"),
@@ -2542,7 +2554,7 @@ class BacktestV7Results:
         # Display sort options
         col1, col2 = st.columns([1, 9], vertical_alignment="bottom")
         with col1:
-            st.selectbox("Sort by:", ['Result Time', 'Backtest Name', 'ADG', 'Gain', 'Drawdown Worst', 'Sharpe Ratio', 'Starting Balance', 'Final Balance', 'Final Balance BTC'], key=f'sort_bt_v7_results', index=0)
+            st.selectbox("Sort by:", ['Result Time', 'Backtest Name', 'ADG', 'Gain', 'Drawdown Worst', 'Sharpe Ratio', 'Ulcer Index', 'ADG/UI', 'Gain/UI', 'Starting Balance', 'Final Balance', 'Final Balance BTC'], key=f'sort_bt_v7_results', index=0)
         with col2:
             st.checkbox("Reverse", value=True, key=f'sort_bt_v7_results_order')
         self.results_d = sorted(self.results_d, key=lambda x: x[st.session_state[f'sort_bt_v7_results']], reverse=st.session_state[f'sort_bt_v7_results_order'])
