@@ -628,20 +628,32 @@ class Database():
     def update_positions(self, user: User):
         positions_db = self.fetch_positions(user)
         exchange = Exchange(user.exchange, user)
-        
+
+        _human_log('Database', f"update_positions start user={user.name} exchange={user.exchange}", level='INFO', user=user.name)
         try:
             positions = exchange.fetch_positions()
+            try:
+                fetched = len(positions) if positions is not None else 0
+            except Exception:
+                fetched = 0
+            _human_log('Database', f"update_positions fetched {fetched} row(s) for user={user.name} exchange={user.exchange}", level='INFO', user=user.name)
+        except Exception as e:
+            _human_log('Database', f"update_positions fetch_positions failed for user={user.name} exchange={user.exchange}: {e}", level='ERROR', user=user.name)
+            raise
         finally:
             exchange.close()  # Release aiohttp resources
 
         # Live positions as set of (symbol, side) for correct membership checks
         symbols = set()
+        nonzero_positions = 0
         for position in positions:
             if position['contracts'] == 0:
                 continue
+            nonzero_positions += 1
             sym = position['symbol'][0:-5].replace("/", "").replace("-", "")
             side = position['side']
             symbols.add((sym, side))
+        _human_log('Database', f"update_positions nonzero {nonzero_positions} row(s) for user={user.name} exchange={user.exchange}", level='INFO', user=user.name)
 
         # DB positions: ensure at most one row per (symbol, side) by
         # detecting duplicates and marking them for removal. We also
@@ -709,24 +721,117 @@ class Database():
                             symbols_db.add(key)
             except sqlite3.Error as e:
                 _human_log('Database', f"DB update_positions error for {user.name}: {e}", level='ERROR', user=user.name)
+
+    def _ccxt_symbol_to_internal(self, symbol: str):
+        if not isinstance(symbol, str):
+            return None
+        if symbol.endswith(':USDT') or symbol.endswith(':USDC'):
+            return symbol[0:-5].replace("/", "").replace("-", "")
+        return None
+
+    def fetch_recent_internal_symbols(self, user: User, exchange: str | None = None, limit: int = 20):
+        target_exchange = exchange or user.exchange
+        sql = '''SELECT "symbol"
+                 FROM "executions"
+                 WHERE "user" = ? AND "exchange" = ?
+                 ORDER BY "timestamp" DESC
+                 LIMIT ?'''
+        try:
+            with self._connect_trades() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, [user.name, target_exchange, int(limit)])
+                rows = cur.fetchall()
+        except sqlite3.Error as e:
+            _human_log('Database', f"DB fetch_recent_internal_symbols error {e} user={user.name} exchange={target_exchange}", level='ERROR', user=user.name)
+            return []
+
+        seen = set()
+        internal_symbols = []
+        for (symbol,) in rows:
+            internal = self._ccxt_symbol_to_internal(symbol)
+            if not internal or internal in seen:
+                continue
+            seen.add(internal)
+            internal_symbols.append(internal)
+        return internal_symbols
+
+    def fetch_recent_ccxt_symbols(self, user: User, exchange: str | None = None, limit: int = 20):
+        target_exchange = exchange or user.exchange
+        sql = '''SELECT "symbol"
+                 FROM "executions"
+                 WHERE "user" = ? AND "exchange" = ?
+                 ORDER BY "timestamp" DESC
+                 LIMIT ?'''
+        try:
+            with self._connect_trades() as conn:
+                cur = conn.cursor()
+                cur.execute(sql, [user.name, target_exchange, int(limit)])
+                rows = cur.fetchall()
+        except sqlite3.Error as e:
+            _human_log('Database', f"DB fetch_recent_ccxt_symbols error {e} user={user.name} exchange={target_exchange}", level='ERROR', user=user.name)
+            return []
+
+        seen = set()
+        ccxt_symbols = []
+        for (symbol,) in rows:
+            if not isinstance(symbol, str) or not symbol.endswith((':USDT', ':USDC')):
+                continue
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            ccxt_symbols.append(symbol)
+        return ccxt_symbols
+
+    def _match_recent_ccxt_symbols(self, user: User, exchange: str | None, internal_symbols: list[str], limit: int = 50):
+        target_exchange = exchange or user.exchange
+        wanted = {s for s in internal_symbols if isinstance(s, str) and s}
+        if not wanted:
+            return {}
+        matched = {}
+        for ccxt_symbol in self.fetch_recent_ccxt_symbols(user, target_exchange, limit):
+            internal = self._ccxt_symbol_to_internal(ccxt_symbol)
+            if internal in wanted and internal not in matched:
+                matched[internal] = ccxt_symbol
+        return matched
     
     def update_orders(self, user: User):
-        positions_db = self.fetch_positions(user)
+        positions_db = self.fetch_positions(user) or []
         orders_db = self.fetch_orders(user)
+        ccxt_symbols = []
+        matched_symbols = {}
+        if user.exchange == "hyperliquid":
+            matched_symbols = self._match_recent_ccxt_symbols(
+                user,
+                user.exchange,
+                [position[1] for position in positions_db if position[1]],
+            )
+        for position in positions_db:
+            internal_symbol = position[1]
+            if not internal_symbol:
+                continue
+            ccxt_symbol = matched_symbols.get(internal_symbol)
+            if not ccxt_symbol:
+                stable_coin = internal_symbol[-4:]
+                ccxt_symbol = internal_symbol[0:-4] + f"/{stable_coin}:{stable_coin}"
+            if ccxt_symbol not in ccxt_symbols:
+                ccxt_symbols.append(ccxt_symbol)
+        if not ccxt_symbols:
+            ccxt_symbols = self.fetch_recent_ccxt_symbols(user, limit=20)
+            if ccxt_symbols:
+                _human_log('Database', f"update_orders using recent execution symbol fallback for {user.name}: {len(ccxt_symbols)} symbol(s)", level='INFO', user=user.name)
         exchange = Exchange(user.exchange, user)
         all_orders = []
         try:
-            for position in positions_db:
+            for ccxt_symbol in ccxt_symbols:
                 try:
-                    stable_coin = position[1][-4:]
-                    orders = exchange.fetch_all_open_orders(position[1][0:-4] + f"/{stable_coin}:{stable_coin}")
+                    orders = exchange.fetch_all_open_orders(ccxt_symbol)
                     # If fetch returns None or an exception-like value, skip
                     if orders is None:
                         continue
                     all_orders.extend(orders)
                 except Exception as e:
                     # Fetch failed (possibly rate limit) — log and skip this position
-                    _human_log('Database', f"DB update_orders fetch_all_open_orders failed for {user.name} pos={position[1]}: {e}", level='WARNING', user=user.name)
+                    _human_log('Database', f"DB update_orders fetch_all_open_orders failed for {user.name} symbol={ccxt_symbol}: {e}", level='WARNING', user=user.name)
                     continue
         finally:
             exchange.close()  # Release aiohttp resources
@@ -769,7 +874,7 @@ class Database():
                 _human_log('Database', f"DB update_orders error for {user.name}: {e}", level='ERROR', user=user.name)
 
     def update_prices(self, user: User):
-        positions_db = self.fetch_positions(user)
+        positions_db = self.fetch_positions(user) or []
         prices_db = self.fetch_prices(user)
         symbols_db = []
         for price in prices_db:
@@ -777,14 +882,28 @@ class Database():
         exchange = Exchange(user.exchange, user)
         symbols = []
         prices = {}
+        matched_symbols = {}
+        if user.exchange == "hyperliquid":
+            matched_symbols = self._match_recent_ccxt_symbols(
+                user,
+                user.exchange,
+                [position[1] for position in positions_db if position[1]],
+            )
         try:
             for position in positions_db:
                 symbol = position[1]
-                if symbol[-4:] == "USDT":
+                symbol_ccxt = matched_symbols.get(symbol)
+                if not symbol_ccxt and symbol[-4:] == "USDT":
                     symbol_ccxt = f'{symbol[0:-4]}/USDT:USDT'
-                elif symbol[-4:] == "USDC":
+                elif not symbol_ccxt and symbol[-4:] == "USDC":
                     symbol_ccxt = f'{symbol[0:-4]}/USDC:USDC'
+                if not symbol_ccxt:
+                    continue
                 symbols.append(symbol_ccxt)
+            if not symbols:
+                symbols = self.fetch_recent_ccxt_symbols(user, limit=20)
+                if symbols:
+                    _human_log('Database', f"update_prices using recent execution symbol fallback for {user.name}: {len(symbols)} symbol(s)", level='INFO', user=user.name)
             if symbols:
                 market_type = "futures"
                 prices = exchange.fetch_prices(symbols, market_type)
@@ -829,6 +948,7 @@ class Database():
     def update_balances(self, user: User):
         exchange = Exchange(user.exchange, user)
         market_type = "swap"
+        _human_log('Database', f"update_balances start user={user.name} exchange={user.exchange} market_type={market_type}", level='INFO', user=user.name)
         try:
             balance = exchange.fetch_balance(market_type)
         except Exception as e:
@@ -838,6 +958,7 @@ class Database():
             return
         finally:
             exchange.close()  # Release aiohttp resources
+        _human_log('Database', f"update_balances fetched balance for user={user.name}: {balance}", level='INFO', user=user.name)
         with self._write_lock:
             try:
                 with self._connect() as conn:

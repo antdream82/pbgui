@@ -2114,6 +2114,8 @@ class PBData():
     async def _ensure_balance_watcher(self, user):
         if user.name not in self.fetch_users:
             return
+        if getattr(user, "exchange", None) == "hyperliquid":
+            return
         if user.name in self._balance_ws_tasks:
             task = self._balance_ws_tasks[user.name]
             if task and not task.done():
@@ -2378,6 +2380,8 @@ class PBData():
     async def _ensure_position_watcher(self, user):
         # Start one WS task per user if not running
         if user.name not in self.fetch_users:
+            return
+        if getattr(user, "exchange", None) == "hyperliquid":
             return
         if user.name in self._position_ws_tasks:
             task = self._position_ws_tasks[user.name]
@@ -3313,6 +3317,21 @@ class PBData():
             return f"{symbol[:-4]}/USDC:USDC"
         return symbol
 
+    def _match_recent_ccxt_symbols(self, user, exchange: str, internal_symbols: list[str], limit: int = 50):
+        wanted = {s for s in internal_symbols if isinstance(s, str) and s}
+        if not wanted:
+            return {}
+        matched = {}
+        try:
+            recent_ccxt_symbols = self.db.fetch_recent_ccxt_symbols(user, exchange, limit)
+        except Exception:
+            recent_ccxt_symbols = []
+        for ccxt_symbol in recent_ccxt_symbols:
+            internal = ccxt_symbol[0:-5].replace("/", "").replace("-", "")
+            if internal in wanted and internal not in matched:
+                matched[internal] = ccxt_symbol
+        return matched
+
     async def _price_exchange_ws_loop(self, exchange: str):
         from Exchange import Exchange
         last_price_write_ts = {}
@@ -3772,9 +3791,27 @@ class PBData():
                 except Exception as e:
                     _human_log('PBData', f"[async] fetch_positions failed for {user.name} ({exchange}): {e}", level='ERROR', user=user)
                     continue
+                if not positions:
+                    try:
+                        fallback_symbols = await asyncio.to_thread(self.db.fetch_recent_ccxt_symbols, user, exchange, 20)
+                    except Exception as e:
+                        _human_log('PBData', f"[async] fetch_recent_ccxt_symbols failed for {user.name} ({exchange}): {e}", level='ERROR', user=user)
+                        fallback_symbols = []
+                    if fallback_symbols:
+                        _human_log('PBData', f"[async] Using recent execution symbol fallback for {user.name} ({exchange}): {len(fallback_symbols)} symbol(s)", level='INFO', user=user)
+                    for ccxt_symbol in fallback_symbols:
+                        internal_symbol = ccxt_symbol[0:-5].replace("/", "").replace("-", "")
+                        mapping.setdefault(ccxt_symbol, []).append((user.name, internal_symbol))
+                matched_symbols = {}
+                if exchange == "hyperliquid" and positions:
+                    matched_symbols = self._match_recent_ccxt_symbols(
+                        user,
+                        exchange,
+                        [pos[1] for pos in positions if pos[1]],
+                    )
                 for pos in positions:
                     internal_symbol = pos[1]
-                    ccxt_symbol = self._to_ccxt_symbol(internal_symbol)
+                    ccxt_symbol = matched_symbols.get(internal_symbol) or self._to_ccxt_symbol(internal_symbol)
                     mapping.setdefault(ccxt_symbol, []).append((user.name, internal_symbol))
             # Always log the final symbol count so we know whether the
             # mapping contains anything for this exchange.

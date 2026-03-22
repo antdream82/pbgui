@@ -976,6 +976,11 @@ class Exchange:
         while True:
                 try:
                     positions = self.instance.fetch_positions()
+                    if self.id == "hyperliquid" and not positions:
+                        try:
+                            positions = self.instance.fetch_positions(params={"dex": "xyz"})
+                        except Exception:
+                            pass
                     return positions
                 except Exception as e:
                     # Convert common ccxt RequestTimeouts and socket timeouts into retries
@@ -1008,7 +1013,22 @@ class Exchange:
         except Exception as e:
             return e
         if self.id == "hyperliquid":
-            return float(balance["total"]["USDC"])
+            try:
+                # PBGUI balance panels expect portfolio-level quote cash, not the
+                # builder-scoped dex account value. On Hyperliquid this lives in
+                # spotClearinghouseState as total USDC.
+                spot_balance = self.instance.fetch_balance(params={"type": "spot"})
+                return float(spot_balance["total"]["USDC"])
+            except Exception:
+                try:
+                    balance_dex = self.instance.fetch_balance(params={"type": market_type, "dex": "xyz"})
+                    return float(balance_dex["total"]["USDC"])
+                except Exception:
+                    pass
+            try:
+                return float(balance["total"]["USDC"])
+            except Exception:
+                return 0.0
         if self.id == "bitget":
             return float(balance["info"][0]["available"])
         elif self.id == "bybit":
@@ -3006,5 +3026,3 @@ class Exchange:
             balance_needed += balance_needed_symbol
             # print(symbol, we, min_price, balance_needed_symbol)
         return balance_needed
-
-
