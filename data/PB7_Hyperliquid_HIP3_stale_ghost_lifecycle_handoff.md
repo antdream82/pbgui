@@ -26,6 +26,7 @@
 - `fetch_open_orders()` 에서 raw `@...` spot open order는 futures state 주입 전에 skip
 - cancel-gone 처리 시 local `open_orders` 제거는 `str(id)` 기준으로 정규화
 - HIP-3 margin-mode 판정은 prefix 강제가 아니라 market metadata 기반 유지
+- `match_check` 진단 로그는 최종 pair/unmatched 결과만 남기고 중간 후보 비교 noise는 줄임
 
 ## 대상 환경
 

@@ -15,6 +15,7 @@ The active divergence is:
 - keeping HIP-3 margin-mode detection metadata-based
 - using dex-scoped HIP-3 position/open-order visibility instead of relying only on default-scope state
 - using Hyperliquid default quote total as the live balance denominator source instead of summing builder `accountValue`
+- keeping a small live-only `match_check` diagnostic refinement so final pair/unmatched output is logged without intermediate-candidate noise
 
 These are exchange-state and live-input plumbing changes. They do not change Rust strategy math.
 
@@ -40,6 +41,7 @@ Currently kept local changes:
 3. HIP-3 margin-mode detection uses market metadata (`onlyIsolated`, `isolatedOnly`, `marginMode == "noCross"`) instead of prefix-only forcing.
 4. HIP-3 positions/open orders are fetched through dex-scoped CCXT paths so builder-scoped state is visible to the bot.
 5. Live balance denominator uses Hyperliquid default `total[quote]` as the portfolio source and does not add dex-scoped `accountValue` on top.
+6. `match_check` diagnostics log final pair/unmatched outcomes only, instead of logging every intermediate old-order candidate comparison.
 
 Temporary tombstone persistence/suppress changes from the `335406020602` investigation were reverted and are not part of the current state.
 
@@ -147,6 +149,27 @@ Effect:
 - avoids double-counting builder collateral / reserved margin in live denominator
 - reduces false WEL/TWEL pressure caused by adding dex `accountValue` to the default quote total
 
+### `match_check` diagnostic refinement
+
+File:
+
+- [passivbot.py](/app/pb7/src/passivbot.py)
+
+Function:
+
+- `Passivbot._apply_order_match_tolerance()`
+
+Behavior:
+
+- keeps order-matching behavior unchanged
+- logs final `result=pair` and final `result=unmatched` comparisons only
+- does not log every intermediate candidate comparison during old/new matching
+
+Effect:
+
+- reduces diagnostic noise in Hyperliquid live logs
+- makes it easier to distinguish true unmatched edge orders from harmless intermediate comparison attempts
+
 ## 5. Why the divergence is kept
 
 This divergence is kept because current PB7 live deployment is a futures bot and should not interpret raw spot `@...` orders as futures orders.
@@ -162,6 +185,7 @@ The divergences are intentionally narrow:
 - they block known-invalid state ingestion
 - they expose builder-scoped HIP-3 state that default-scope CCXT calls miss
 - they avoid live denominator double-counting from default total plus builder `accountValue`
+- they keep live matching diagnostics readable without changing order-matching behavior
 - they do not alter Rust strategy math
 - they do not alter order behavior in backtest/Rust
 
@@ -173,6 +197,7 @@ Not changed:
 - general order generation logic
 - non-`@...` futures order handling
 - generic churn logic except where separately patched
+- order-matching decisions themselves; only the diagnostic logging around matching was trimmed
 
 This note does not describe reverted investigation-only diagnostics or tombstone persistence, because they are not part of the current state.
 
@@ -186,6 +211,8 @@ Expected runtime behavior:
 - non-`@...` futures orders should continue through the normal path
 - HIP-3 positions and resting HIP-3 futures orders should remain visible through dex-scoped state fetches
 - live balance should track the default quote total and should not jump upward from builder `accountValue` being added on top
+- `match_check` logs should show final `result=pair` / `result=unmatched` entries instead of a stream of intermediate candidate comparisons
+- the remaining recurring Hyperliquid churn, when present, is expected to be concentrated in the outermost `XYZ100` buy edge order and to be predominantly qty-driven
 
 Expected log pattern:
 
