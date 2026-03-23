@@ -810,6 +810,13 @@ class OptimizeV7Results:
         
         if not "d_paretos" in st.session_state:
             d = []
+
+            def first_present(mapping, *keys, default=None):
+                for key in keys:
+                    if key in mapping:
+                        return mapping[key]
+                return default
+
             for id, pareto in enumerate(self.paretos):
                 name = pareto["index_filename"].split("/")[-1]
                 
@@ -880,20 +887,48 @@ class OptimizeV7Results:
                     if select_analysis and st.session_state.opt_v7_pareto_select_analysis in select_analysis:
                         if st.session_state.opt_v7_pareto_select_analysis == "analyses_combined":
                             analysis = pareto["analyses_combined"]
-                            # Support both old format (_max suffix) and new format (_mean suffix)
-                            adg = analysis.get("adg_max", analysis.get("adg_mean", 0))
-                            omega_ratio = analysis.get("omega_ratio_max", analysis.get("omega_ratio_mean", 0))
-                            drawdown_worst = analysis.get("drawdown_worst_max", analysis.get("drawdown_worst_mean", 0))
-                            peak_recovery_hours = analysis.get(
-                                "peak_recovery_hours_equity_max",
-                                analysis.get("peak_recovery_hours_equity_mean", 0),
+                            # Old optimize payloads do not always persist every metric.
+                            # Prefer explicit legacy/current keys and leave missing metrics blank
+                            # rather than rendering a misleading zero.
+                            adg = first_present(analysis, "adg_max", "adg_mean", "adg", default=0)
+                            omega_ratio = first_present(
+                                analysis, "omega_ratio_max", "omega_ratio_mean", "omega_ratio", default=0
                             )
-                            ulcer_index = analysis.get("ulcer_index_max", analysis.get("ulcer_index_mean", 0))
-                            adg_over_ui = analysis.get("adg_over_ui_max", analysis.get("adg_over_ui_mean", 0))
-                            gain_over_ui = analysis.get("gain_over_ui_max", analysis.get("gain_over_ui_mean", 0))
-                            gain = analysis.get("gain_max", analysis.get("gain_mean", 0))
-                            total_wallet_exposure_mean = analysis.get("total_wallet_exposure_mean_max", analysis.get("total_wallet_exposure_mean_mean", 0))
-                            sharpe_ratio = analysis.get("sharpe_ratio_max", analysis.get("sharpe_ratio_mean", 0))
+                            drawdown_worst = first_present(
+                                analysis,
+                                "drawdown_worst_max",
+                                "drawdown_worst_mean",
+                                "drawdown_worst",
+                                default=0,
+                            )
+                            peak_recovery_hours = first_present(
+                                analysis,
+                                "peak_recovery_hours_equity_max",
+                                "peak_recovery_hours_equity_mean",
+                                "peak_recovery_hours_equity",
+                                "peak_recovery_hours_pnl_max",
+                                "peak_recovery_hours_pnl_mean",
+                                "peak_recovery_hours_pnl",
+                            )
+                            ulcer_index = first_present(
+                                analysis, "ulcer_index_max", "ulcer_index_mean", "ulcer_index"
+                            )
+                            adg_over_ui = first_present(
+                                analysis, "adg_over_ui_max", "adg_over_ui_mean", "adg_over_ui"
+                            )
+                            gain_over_ui = first_present(
+                                analysis, "gain_over_ui_max", "gain_over_ui_mean", "gain_over_ui"
+                            )
+                            gain = first_present(analysis, "gain_max", "gain_mean", "gain", default=0)
+                            total_wallet_exposure_mean = first_present(
+                                analysis,
+                                "total_wallet_exposure_mean_max",
+                                "total_wallet_exposure_mean_mean",
+                                "total_wallet_exposure_mean",
+                            )
+                            sharpe_ratio = first_present(
+                                analysis, "sharpe_ratio_max", "sharpe_ratio_mean", "sharpe_ratio", default=0
+                            )
                             d.append({
                                 'Select': False,
                                 'id': id,
@@ -922,12 +957,14 @@ class OptimizeV7Results:
                                     'adg': analysis["adg"],
                                     'omega_ratio': analysis.get("omega_ratio", 0),
                                     'drawdown_worst': analysis["drawdown_worst"],
-                                    'peak_recovery_hours': analysis.get("peak_recovery_hours_equity", 0),
-                                    'ulcer_index': analysis.get("ulcer_index", 0),
-                                    'adg_over_ui': analysis.get("adg_over_ui", 0),
-                                    'gain_over_ui': analysis.get("gain_over_ui", 0),
+                                    'peak_recovery_hours': first_present(
+                                        analysis, "peak_recovery_hours_equity", "peak_recovery_hours_pnl"
+                                    ),
+                                    'ulcer_index': analysis.get("ulcer_index"),
+                                    'adg_over_ui': analysis.get("adg_over_ui"),
+                                    'gain_over_ui': analysis.get("gain_over_ui"),
                                     'gain': analysis["gain"],
-                                    'total_wallet_exposure_mean': analysis.get("total_wallet_exposure_mean", 0),
+                                    'total_wallet_exposure_mean': analysis.get("total_wallet_exposure_mean"),
                                     'sharpe_ratio': analysis["sharpe_ratio"],
                                     'Name': name,
                                     'file': pareto["index_filename"],
