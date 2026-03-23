@@ -38,6 +38,7 @@ Current kept behavior:
 2. `Exchange.fetch_balance()` for Hyperliquid uses `fetch_balance(type="spot") -> total["USDC"]` as dashboard total balance, with dex/default fallback only if needed.
 3. PBData does not treat Hyperliquid balance/positions as websocket-fed state; those updates are intentionally handled through REST/shared polling.
 4. Hyperliquid price/order symbol mapping preserves recent execution CCXT symbols such as `XYZ-XYZ100/USDC:USDC` instead of reconstructing invalid forms like `XYZXYZ100/USDC:USDC`.
+5. Dashboard API display paths recalculate Hyperliquid position uPnl from latest DB price where available, instead of trusting a potentially stale stored `position.upnl` value.
 
 ### PB7 metric UI exposure
 
@@ -123,6 +124,26 @@ Behavior:
 Effect:
 - Prevents `BadSymbol` errors from invalid reconstructed symbols.
 
+### Dashboard display-side uPnl recalculation
+
+File:
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+
+Endpoints:
+- `/api/dashboard/balance`
+- `/api/dashboard/positions_data`
+
+Behavior:
+- When a latest DB price exists for a position symbol, dashboard API responses recalculate display `upnl` from:
+  - `size`
+  - `entry`
+  - `side`
+  - current DB `price`
+- If no current price is available, the stored DB `position.upnl` is used as fallback.
+
+Effect:
+- Dashboard `Balance` and `Positions` views are less sensitive to stale `position.upnl` snapshots and better reflect current price-derived PnL.
+
 ### PB7 metric display
 
 Files:
@@ -141,6 +162,7 @@ Without these local changes, PBGUI can show:
 - `0` or stale Hyperliquid balance
 - missing Hyperliquid position/order/price data
 - `BadSymbol` errors for HIP-3 symbols
+- stale display uPnl even when latest price is already in the DB
 - PB7 metrics present in payloads but absent or misleadingly zero in the UI
 
 ## What was intentionally not changed
@@ -161,6 +183,7 @@ Expected current runtime behavior:
 - Hyperliquid position rows exist in `pbgui.db`
 - Hyperliquid orders rows exist when live open orders exist
 - Hyperliquid price mapping uses valid CCXT symbols
+- Dashboard `uPnl` reflects latest DB price when available, not only the last stored position snapshot
 - Old optimize results with missing metrics show blanks rather than false zeros
 
 ## Operational guidance
