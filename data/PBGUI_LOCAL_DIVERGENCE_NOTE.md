@@ -2,10 +2,11 @@
 
 ## Summary
 
-PBGUI keeps two local divergences from upstream:
+PBGUI keeps three local divergences from upstream:
 
 1. Hyperliquid dashboard/data ingestion fixes
 2. PB7 metric UI exposure fixes
+3. Reverse-proxy-friendly dashboard/log viewer routing fixes
 
 These are UI/data-ingestion changes only. They do not change PB7 trading logic.
 
@@ -22,6 +23,10 @@ Current deployment uses Hyperliquid in a way upstream PBGUI does not handle clea
 ### PB7 metric UI
 
 PB7 emits newer analysis metrics that upstream PBGUI does not fully expose across all supported result payload shapes.
+
+### Reverse-proxy dashboard/log routing
+
+Current deployment uses PBGUI behind a reverse proxy. Upstream paths still assume that some dashboard/log viewer flows can safely build browser URLs against `host:8000`. In proxy mode that can resolve to internal/local addresses instead of the browser-visible origin.
 
 ## Current local divergence from upstream
 
@@ -64,6 +69,28 @@ Current kept behavior:
    - `total_wallet_exposure_mean`
 3. Old-format optimize results do not render missing metrics as misleading `0`; missing values are left blank when the payload does not contain them.
 4. EMA span slider max is raised to `20000`.
+
+### Reverse-proxy-friendly dashboard/log viewer routing
+
+Files:
+- [Dashboard.py](/app/pbgui/Dashboard.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+- [frontend/dashboard_main.html](/app/pbgui/frontend/dashboard_main.html)
+- [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py)
+- [navi/system_vps_monitor.py](/app/pbgui/navi/system_vps_monitor.py)
+- [pbgui_func.py](/app/pbgui/pbgui_func.py)
+- [components/log_viewer/index.html](/app/pbgui/components/log_viewer/index.html)
+- [components/vps_monitor/index.html](/app/pbgui/components/vps_monitor/index.html)
+- [components/nav_bridge/index.html](/app/pbgui/components/nav_bridge/index.html)
+
+Current kept behavior:
+
+1. Browser-facing FastAPI URLs are resolved via same-origin `/api`, `/app`, `/ws` paths in reverse-proxy mode.
+2. Direct `:8501` access still uses explicit `host:8000` API/WS targets for compatibility.
+3. Dashboard main page no longer derives browser API/WS bases from server-side `request.url` in proxy mode.
+4. Dashboard list loading does not depend on Streamlit session-state objects inside FastAPI routes.
+5. Standalone dashboard main page auto-loads the first available dashboard when `current` is empty.
+6. Log viewer, VPS monitor, and dashboard nav bridge accept relative `/ws` bases and resolve them against the browser-visible parent origin.
 
 ## Exact local patch behavior
 
@@ -155,6 +182,25 @@ Behavior:
 - Support legacy/current payload shapes
 - For old optimize payloads, try explicit legacy/current keys first and leave missing values blank instead of forcing `0`
 
+### Reverse-proxy-friendly dashboard/log routing
+
+Files:
+- [pbgui_func.py](/app/pbgui/pbgui_func.py)
+- [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+- [frontend/dashboard_main.html](/app/pbgui/frontend/dashboard_main.html)
+- [components/log_viewer/index.html](/app/pbgui/components/log_viewer/index.html)
+- [components/vps_monitor/index.html](/app/pbgui/components/vps_monitor/index.html)
+- [components/nav_bridge/index.html](/app/pbgui/components/nav_bridge/index.html)
+
+Behavior:
+- `_resolve_browser_fastapi_urls()` returns same-origin `/api`, `/app`, `/ws` in proxy mode and explicit `host:8000` only for direct `:8501` access.
+- `info_dashboards.dashboard()` redirects using browser-side location logic instead of trusting forwarded headers.
+- `/api/dashboard/main_page` emits `API_BASE` and `WS_BASE` appropriate for direct vs proxy mode.
+- `/api/dashboard/dashboards` returns dashboard names directly from `data/dashboards/*.json` without relying on Streamlit session state.
+- `dashboard_main.html` auto-loads the first dashboard when available.
+- Log viewer / VPS monitor / nav bridge resolve relative websocket bases against the browser-visible origin.
+
 ## Why the divergence is kept
 
 Without these local changes, PBGUI can show:
@@ -164,6 +210,7 @@ Without these local changes, PBGUI can show:
 - `BadSymbol` errors for HIP-3 symbols
 - stale display uPnl even when latest price is already in the DB
 - PB7 metrics present in payloads but absent or misleadingly zero in the UI
+- proxy-mode dashboard and log pages trying to connect to internal `127.0.0.1:8000` or `localhost:8000` addresses
 
 ## What was intentionally not changed
 
@@ -185,6 +232,7 @@ Expected current runtime behavior:
 - Hyperliquid price mapping uses valid CCXT symbols
 - Dashboard `uPnl` reflects latest DB price when available, not only the last stored position snapshot
 - Old optimize results with missing metrics show blanks rather than false zeros
+- Reverse-proxy access works when `/api/*`, `/ws/*`, `/app/*`, and `/health` are routed to port `8000`, with the remaining app traffic routed to Streamlit on `8501`
 
 ## Operational guidance
 
@@ -192,8 +240,9 @@ When updating upstream:
 
 1. Re-check [Exchange.py](/app/pbgui/Exchange.py), [Database.py](/app/pbgui/Database.py), and [PBData.py](/app/pbgui/PBData.py) first.
 2. Re-check [BacktestV7.py](/app/pbgui/BacktestV7.py) and [OptimizeV7.py](/app/pbgui/OptimizeV7.py) for metric wiring regressions.
-3. If `Information -> Dashboards` fails again, verify PBApiServer on port `8000` is reachable from the browser path being used.
-4. If optimize metrics revert to `0`, inspect the actual pareto payload shape before changing UI keys.
+3. Re-check [pbgui_func.py](/app/pbgui/pbgui_func.py), [api/dashboard.py](/app/pbgui/api/dashboard.py), and [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py) if proxy-mode dashboard/log routing regresses.
+4. If `Information -> Dashboards` or log viewer fails again behind a proxy, verify `/api/*`, `/ws/*`, `/app/*`, and `/health` reach PBApiServer on port `8000`.
+5. If optimize metrics revert to `0`, inspect the actual pareto payload shape before changing UI keys.
 
 ## Long-term proper fix
 
@@ -202,3 +251,4 @@ The proper long-term fix is to upstream these behaviors or replace them with cle
 - Hyperliquid ingestion should have an upstream-safe contract for spot/dex/default scope semantics.
 - PBGUI should not need deployment-specific symbol-preservation logic for HIP-3.
 - PB7/PBGUI metric payload handling should converge so old-format optimize results do not require special missing-metric handling.
+- Dashboard/log viewer routing should be origin/path-based upstream by default, without direct `host:8000` assumptions in proxy mode.
