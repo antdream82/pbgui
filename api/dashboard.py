@@ -46,6 +46,22 @@ def _get_exchange(user_obj):
     return _exchange_cache[key]
 
 
+def _calc_position_upnl(size: float, entry: float, price: float, side: str | None) -> float:
+    """Calculate display uPnl from current price when available."""
+    try:
+        size_f = float(size or 0.0)
+        entry_f = float(entry or 0.0)
+        price_f = float(price or 0.0)
+    except Exception:
+        return 0.0
+    if not size_f or not entry_f or not price_f:
+        return 0.0
+    side_s = (side or "long").lower()
+    if side_s == "short":
+        return (entry_f - price_f) * abs(size_f)
+    return (price_f - entry_f) * abs(size_f)
+
+
 # ── OHLCV in-memory cache ──────────────────────────────────────────────────
 # Key: (user_name, symbol, timeframe)
 # Value: {"candles": [...], "ts": last_update_epoch, "exchange_id": str}
@@ -554,12 +570,18 @@ def get_balance(
         # fetch positions for TWE / uPnl
         user_obj = all_users.find_user(user_name)
         positions = db.fetch_positions(user_obj) if user_obj else []
+        prices = db.fetch_prices(user_obj) if user_obj else []
+        price_by_symbol = {p[1]: p[3] for p in (prices or [])}
 
         upnl = 0.0
         pprices = 0.0
         for pos in (positions or []):
             pprices += pos[3] * pos[5]
-            upnl += pos[4]
+            current_price = price_by_symbol.get(pos[1], 0.0)
+            if current_price:
+                upnl += _calc_position_upnl(pos[3], pos[5], current_price, pos[7] if len(pos) > 7 else "long")
+            else:
+                upnl += pos[4]
 
         all_pprices += pprices
         twe = (100 / balance * pprices) if balance and pprices else 0.0
@@ -681,6 +703,22 @@ def set_pending_full(
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------- /dashboards
+
+@router.get("/dashboards")
+def get_dashboards(session: SessionToken = Depends(require_auth)) -> dict[str, Any]:
+    """Return available dashboard names without requiring Streamlit session state."""
+    from pathlib import Path as _P
+    from pbgui_func import PBGDIR
+
+    try:
+        dashboards_dir = _P(f"{PBGDIR}/data/dashboards")
+        dashboards = sorted(p.stem for p in dashboards_dir.glob("*.json") if p.is_file())
+    except Exception:
+        dashboards = []
+    return {"dashboards": dashboards}
+
+
 # ---------------------------------------------------------------- /editor_page
 
 @router.get("/editor_page", response_class=HTMLResponse)
@@ -720,23 +758,33 @@ def get_main_page(
     html_path = _P(__file__).parent.parent / "frontend" / "dashboard_main.html"
     html = html_path.read_text(encoding="utf-8")
 
-    # Derive API base from the actual request URL so iframes use the correct host/port
-    scheme = request.url.scheme
-    host   = request.url.hostname or "127.0.0.1"
-    port   = request.url.port
-    origin = f"{scheme}://{host}" + (f":{port}" if port else "")
-    api_base = origin + "/api"
-    ws_base  = api_base.replace("http://", "ws://").replace("https://", "wss://")
+    # Browser-facing routing is determined by how Streamlit launched us:
+    # - direct access on :8501 passes st_base=http://host:8501 -> use host:8000
+    # - reverse-proxy access passes st_base=""                -> use same-origin paths
+    st_base_s = (st_base or "").strip()
+    if st_base_s:
+        from urllib.parse import urlparse as _urlparse
+        parsed = _urlparse(st_base_s)
+        host = parsed.hostname or "127.0.0.1"
+        scheme = parsed.scheme or "http"
+        api_origin = f"{scheme}://{host}:8000"
+        api_base = f"{api_origin}/api"
+        ws_scheme = "wss" if scheme == "https" else "ws"
+        ws_base = f"{ws_scheme}://{host}:8000/ws"
+    else:
+        api_base = "/api"
+        ws_base = "/ws"
 
     html = html.replace('"%%TOKEN%%"',         _json.dumps(session.token))
     html = html.replace('"%%API_BASE%%"',      _json.dumps(api_base))
     html = html.replace('"%%WS_BASE%%"',       _json.dumps(ws_base))
-    html = html.replace('"%%ST_BASE%%"',       _json.dumps(st_base))
+    html = html.replace('"%%ST_BASE%%"',       _json.dumps(st_base_s))
     html = html.replace('"%%CURRENT%%"',       _json.dumps(current))
 
-    from Dashboard import Dashboard as _Dashboard
+    from pbgui_func import PBGDIR
     try:
-        dashboards = sorted(_Dashboard().list_dashboards())
+        dashboards_dir = _P(f"{PBGDIR}/data/dashboards")
+        dashboards = sorted(p.stem for p in dashboards_dir.glob("*.json") if p.is_file())
     except Exception:
         dashboards = []
     html = html.replace("%%DASHBOARDS_JSON%%", _json.dumps(dashboards))
@@ -1276,6 +1324,7 @@ def get_positions_data(
             continue
         positions = db.fetch_positions(user_obj) or []
         prices = db.fetch_prices(user_obj) or []
+        price_by_symbol = {p[1]: p[3] for p in prices}
         for pos in positions:
             symbol = pos[1]
             uname = pos[6]
@@ -1291,17 +1340,15 @@ def get_positions_data(
                 elif order[5] == "sell":
                     if next_tp == 0 or next_tp > order[4]:
                         next_tp = order[4]
-            price = 0.0
-            for p in prices:
-                if p[1] == symbol:
-                    price = p[3]
+            price = price_by_symbol.get(symbol, 0.0)
             pos_value = pos[3] * price
+            upnl = _calc_position_upnl(pos[3], pos[5], price, pos[7] if len(pos) > 7 else "long") if price else pos[4]
             all_positions.append({
                 "user":     uname,
                 "symbol":   symbol,
                 "side":     pos[7] if len(pos) > 7 else "long",
                 "size":     pos[3],
-                "upnl":     round(pos[4], 8),
+                "upnl":     round(upnl, 8),
                 "entry":    pos[5],
                 "price":    price,
                 "dca":      dca,

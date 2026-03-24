@@ -142,7 +142,7 @@ render_header_with_guide(
 )
 
 # Ensure API server and get auth token
-from pbgui_func import _start_fastapi_server_if_needed
+from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
 from api.auth import generate_token
 
 api_host, api_port_val, api_ok = _start_fastapi_server_if_needed()
@@ -165,24 +165,15 @@ if "api_token" not in st.session_state:
 
 api_token = st.session_state["api_token"]
 
-# Determine browser-usable host for WebSocket connections.
-# api_host from config may be "0.0.0.0" (bind all interfaces) which
-# is not a valid WS target for browsers.  Use the Streamlit request
-# host header so remote access works too.
-_ws_host = "127.0.0.1"
-try:
-    _req_host = st.context.headers.get("Host", "")
-    if _req_host:
-        # Strip port from Host header (e.g. "192.168.1.100:8501" → "192.168.1.100")
-        _ws_host = _req_host.split(":")[0] or "127.0.0.1"
-except Exception:
-    pass
+_api_base_str, _api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port_val)
 
 # Load HTML and inject API port + token + host
 html = _load_component_html()
 html = html.replace("__API_PORT__", str(api_port_val))
 html = html.replace("__API_TOKEN__", api_token)
-html = html.replace("__API_HOST__", _ws_host)
+html = html.replace("__API_HOST__", _api_host_str)
+import json as _json
+html = html.replace("__WS_BASE_JSON__", _json.dumps(_ws_base_str))
 
 # CSS to make the iframe fill the remaining viewport.
 st.markdown("""

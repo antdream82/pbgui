@@ -34,7 +34,13 @@ function connectWS() {
     if (!wsUrl) return;
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
 
-    ws = new WebSocket(wsUrl);
+    let resolvedWsUrl = wsUrl;
+    if (resolvedWsUrl.startsWith('/')) {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        resolvedWsUrl = `${proto}//${window.location.host}${resolvedWsUrl}`;
+    }
+
+    ws = new WebSocket(resolvedWsUrl);
     ws.onopen = function () {
         reconnDelay = 1000;
     };

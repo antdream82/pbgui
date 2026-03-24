@@ -298,7 +298,7 @@ class Dashboard():
         """Embed the compact JS header (name, cols, rows) via st.html.
         Cell type selectors and swap buttons are handled by Streamlit inline."""
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -316,15 +316,7 @@ class Dashboard():
             st.session_state["api_token"] = generate_token(str(user_id), expires_in_seconds=86400).token
         token = st.session_state["api_token"]
 
-        _browser_host = "127.0.0.1"
-        try:
-            req_host = st.context.headers.get("Host", "")
-            if req_host:
-                _browser_host = req_host.split(":")[0] or "127.0.0.1"
-        except Exception:
-            pass
-
-        api_base_str = f"http://{_browser_host}:{api_port}/api"
+        api_base_str, _api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
         name_json = _json.dumps(self.name or "")
 
         html_path = _Path(__file__).parent / "frontend" / "dashboard_grid_editor.html"
@@ -344,7 +336,7 @@ class Dashboard():
         No iframe — height is dynamic and the preview renders directly below.
         save() pulls the final config back from FastAPI.
         """
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         from pathlib import Path as _Path
         import json as _json
@@ -369,16 +361,7 @@ class Dashboard():
             ).token
         token = st.session_state["api_token"]
 
-        # Resolve browser-usable hostname
-        _browser_host = "127.0.0.1"
-        try:
-            req_host = st.context.headers.get("Host", "")
-            if req_host:
-                _browser_host = req_host.split(":")[0] or "127.0.0.1"
-        except Exception:
-            pass
-
-        api_base = f"http://{_browser_host}:{api_port}/api"
+        api_base, _api_host, _app_base, _ws_base = _resolve_browser_fastapi_urls(api_port)
 
         # Push current config to FastAPI once when entering edit mode,
         # so the editor initialises from the saved state (not an empty grid).
@@ -632,15 +615,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Resolve users list
         if user and isinstance(user, (list, tuple)) and len(user) > 0:
@@ -677,7 +652,7 @@ class Dashboard():
     def view_adg_impl(self, position : str, user : str = None, period : str = None, mode : str = "bar"):
         """Render the ADG widget via st.html (FastAPI + Vanilla JS / Plotly)."""
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -700,15 +675,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Resolve users list
         if user and isinstance(user, (list, tuple)) and len(user) > 0:
@@ -743,7 +710,7 @@ class Dashboard():
 
     def view_ppl_impl(self, position : str, user : str = None, period : str = None, sum_period : str = None):
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -766,15 +733,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Resolve users list
         if user and isinstance(user, (list, tuple)) and len(user) > 0:
@@ -810,7 +769,7 @@ class Dashboard():
     def view_income_impl(self, position : str, user : str = None, period : str = None, last : int = 0, filter : float = 0.0):
         """Render the Income widget via st.html (FastAPI + Vanilla JS / Plotly)."""
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -833,15 +792,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Resolve users list
         if user and isinstance(user, (list, tuple)) and len(user) > 0:
@@ -885,7 +836,7 @@ class Dashboard():
     def view_top_symbols_impl(self, position: str, user=None, period=None, top=None):
         """Render the Top Symbols bar chart via st.html (FastAPI + Vanilla JS / Plotly)."""
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -908,15 +859,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Resolve users list
         if user and isinstance(user, (list, tuple)) and len(user) > 0:
@@ -979,16 +922,7 @@ class Dashboard():
         token = st.session_state["api_token"]
 
         # Resolve browser-usable hostname (0.0.0.0 is not routable from browser)
-        _browser_host = "127.0.0.1"
-        try:
-            req_host = st.context.headers.get("Host", "")
-            if req_host:
-                _browser_host = req_host.split(":")[0] or "127.0.0.1"
-        except Exception:
-            pass
-
-        api_host_str = f"{_browser_host}:{api_port}"
-        api_base_str = f"http://{_browser_host}:{api_port}/api"
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Load HTML template and inject config as JS variables (%%PLACEHOLDER%% pattern)
         html_path = _Path(__file__).parent / "frontend" / "dashboard_balance.html"
@@ -1052,7 +986,7 @@ class Dashboard():
     def view_positions_impl(self, position : str, user : str = None):
         """Render the Positions widget via st.html (FastAPI + Vanilla JS)."""
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -1075,15 +1009,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Resolve users list
         if user and isinstance(user, (list, tuple)) and len(user) > 0:
@@ -1114,7 +1040,7 @@ class Dashboard():
     def view_orders_impl(self, pos : str, orders : str = None, tf : str = "4h", edit : bool = False):
         """Render the Orders widget via st.html (FastAPI + Vanilla JS / Plotly)."""
         from pathlib import Path as _Path
-        from pbgui_func import _start_fastapi_server_if_needed
+        from pbgui_func import _start_fastapi_server_if_needed, _resolve_browser_fastapi_urls
         from api.auth import generate_token
         import json as _json
 
@@ -1137,15 +1063,7 @@ class Dashboard():
             ).token
         token = st.session_state['api_token']
 
-        _browser_host = '127.0.0.1'
-        try:
-            req_host = st.context.headers.get('Host', '')
-            if req_host:
-                _browser_host = req_host.split(':')[0] or '127.0.0.1'
-        except Exception:
-            pass
-        api_base_str = f'http://{_browser_host}:{api_port}/api'
-        api_host_str = f'{_browser_host}:{api_port}'
+        api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
         # Linked positions key (e.g. 'view_orders_1_1')
         linked_pos = orders or ''

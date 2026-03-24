@@ -161,14 +161,7 @@ def _render_sidebar_html(dashboards):
         ).token
     token = st.session_state["api_token"]
 
-    _browser_host = "127.0.0.1"
-    try:
-        req_host = st.context.headers.get("Host", "")
-        if req_host:
-            _browser_host = req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-    api_base = f"http://{_browser_host}:{api_port}/api"
+    api_base, _api_host, _app_base, _ws_base = _resolve_browser_fastapi_urls(api_port)
 
     current_name = ""
     edit_mode = "edit_dashboard" in st.session_state
@@ -236,26 +229,6 @@ def dashboard():
         ).token
     token = st.session_state["api_token"]
 
-    # Derive browser-visible host from the incoming request
-    browser_host = "127.0.0.1"
-    try:
-        req_host = st.context.headers.get("Host", "")
-        if req_host:
-            browser_host = req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-
-    # Derive Streamlit port from the same Host header
-    st_port = 8501
-    try:
-        req_host = st.context.headers.get("Host", "")
-        if ":" in req_host:
-            st_port = int(req_host.split(":")[1])
-    except Exception:
-        pass
-
-    st_base = f"http://{browser_host}:{st_port}"
-
     # Pick the best current dashboard
     current = ""
     try:
@@ -264,19 +237,27 @@ def dashboard():
     except Exception:
         pass
 
-    url = (
-        f"http://{browser_host}:{api_port}/api/dashboard/main_page"
-        f"?token={token}"
-        f"&st_base={st_base}"
-        f"&current={current}"
-    )
-
-    # Redirect the entire browser window to the standalone FastAPI page.
-    # st.html injects directly into the Streamlit page DOM (not a sub-iframe),
-    # so window.location.replace navigates the whole window immediately.
-    # The URL contains no < or > chars, so DOMPurify leaves the script intact.
+    # Redirect the entire browser window using the browser's actual location instead
+    # of request headers. This avoids reverse-proxy Host/Port ambiguity.
     st.html(
-        f'<script>window.location.replace("{url}");</script>',
+        f"""
+        <script>
+        (function() {{
+          const token = {json.dumps(token)};
+          const current = {json.dumps(current)};
+          const isDirect8501 = window.location.port === "8501";
+          let target;
+          if (isDirect8501) {{
+            const apiBase = `${{window.location.protocol}}//${{window.location.hostname}}:{api_port}/api`;
+            const stBase = window.location.origin;
+            target = `${{apiBase}}/dashboard/main_page?token=${{encodeURIComponent(token)}}&st_base=${{encodeURIComponent(stBase)}}&current=${{encodeURIComponent(current)}}`;
+          }} else {{
+            target = `/api/dashboard/main_page?token=${{encodeURIComponent(token)}}&st_base=&current=${{encodeURIComponent(current)}}`;
+          }}
+          window.location.replace(target);
+        }})();
+        </script>
+        """,
         unsafe_allow_javascript=True,
     )
     st.stop()

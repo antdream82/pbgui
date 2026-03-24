@@ -1438,6 +1438,8 @@ html, body {
   refreshList(function () {
     if (CURRENT && DASHBOARDS.indexOf(CURRENT) !== -1) {
       loadView(CURRENT);
+    } else if (DASHBOARDS.length > 0) {
+      loadView(DASHBOARDS[0]);
     }
   });
 

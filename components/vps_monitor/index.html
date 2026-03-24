@@ -545,6 +545,7 @@ let reconnectTimer = null;
 let apiPort = __API_PORT__;    // Injected by Python
 let apiToken = '__API_TOKEN__'; // Injected by Python
 let apiHost = '__API_HOST__';   // Injected by Python (srcdoc iframes have empty hostname)
+let wsBase = __WS_BASE_JSON__;      // Injected by Python when reverse-proxy aware routing is available
 
 // Instance tab state
 let instSort = { col: 'Name', asc: true };
@@ -584,7 +585,28 @@ const RENDER_CHUNK_SIZE = 500; // DOM nodes created per animation frame during r
 
 // ── WebSocket ──────────────────────────────────────────────
 function connect() {
-  const url = `ws://${apiHost}:${apiPort}/ws/vps?token=${apiToken}`;
+  const fallbackBase = `ws://${apiHost}:${apiPort}/ws`;
+  let base = wsBase || fallbackBase;
+  if (base.startsWith('/')) {
+    let parentProto = window.location.protocol;
+    let parentHost = window.location.host;
+    try {
+      if (window.parent && window.parent.location) {
+        parentProto = window.parent.location.protocol || parentProto;
+        parentHost = window.parent.location.host || parentHost;
+      }
+    } catch (_) {}
+    if (!parentHost && document.referrer) {
+      try {
+        const ref = new URL(document.referrer);
+        parentProto = ref.protocol || parentProto;
+        parentHost = ref.host || parentHost;
+      } catch (_) {}
+    }
+    const proto = parentProto === 'https:' ? 'wss:' : 'ws:';
+    base = `${proto}//${parentHost}${base}`;
+  }
+  const url = `${base}/vps?token=${apiToken}`;
   
   ws = new WebSocket(url);
   

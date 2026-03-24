@@ -116,6 +116,44 @@ def is_pb7_installed():
 PBGDIR = Path.cwd()
 
 
+def _resolve_browser_fastapi_urls(api_port: int) -> tuple[str, str, str, str]:
+    """Return browser-usable FastAPI URLs for direct and reverse-proxy access.
+
+    Returns:
+        (api_base, api_host, app_base, ws_base)
+
+    Behavior:
+    - direct Streamlit access on :8501 -> FastAPI on :8000
+    - reverse proxy access -> same-origin /api, /app, /ws routing
+    """
+    req_host = ""
+    forwarded_host = ""
+    forwarded_port = ""
+    try:
+        headers = st.context.headers
+        req_host = (headers.get("Host", "") or "").strip()
+        forwarded_host = (headers.get("X-Forwarded-Host", "") or "").strip()
+        forwarded_port = (headers.get("X-Forwarded-Port", "") or "").strip()
+    except Exception:
+        pass
+
+    effective_host = forwarded_host.split(",", 1)[0].strip() if forwarded_host else req_host
+
+    if effective_host:
+        host_only = effective_host.split(":", 1)[0] or "127.0.0.1"
+        req_port = forwarded_port or (effective_host.split(":", 1)[1] if ":" in effective_host else "")
+        if req_port == "8501":
+            origin = f"http://{host_only}:{api_port}"
+            return f"{origin}/api", f"{host_only}:{api_port}", f"{origin}/app", f"ws://{host_only}:{api_port}/ws"
+
+        # Reverse-proxy mode: keep browser on the current origin and let the proxy
+        # route /api, /app, /ws to FastAPI.
+        return "/api", effective_host, "/app", "/ws"
+
+    origin = f"http://127.0.0.1:{api_port}"
+    return f"{origin}/api", f"127.0.0.1:{api_port}", f"{origin}/app", f"ws://127.0.0.1:{api_port}/ws"
+
+
 def is_authenticted():
     if 'password_correct' in st.session_state:
         if st.session_state['password_correct']:
@@ -463,15 +501,7 @@ def render_log_viewer(
     # API server connection for WebSocket log streaming
     api_host_cfg, api_port_val, _api_ok = _start_fastapi_server_if_needed()
 
-    # Determine browser-usable hostname (bind address 0.0.0.0 is not valid for WS)
-    _ws_host = "127.0.0.1"
-    try:
-        import streamlit as _st
-        _req_host = _st.context.headers.get("Host", "")
-        if _req_host:
-            _ws_host = _req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
+    api_base_str, api_host_str, _app_base_str, ws_base_str = _resolve_browser_fastapi_urls(api_port_val)
 
     # Generate / reuse API token for this session
     from api.auth import generate_token as _gen_token
@@ -514,7 +544,9 @@ def render_log_viewer(
         _load_log_viewer_html()
         .replace("__API_PORT__", str(api_port_val))
         .replace("__API_TOKEN__", _api_token)
-        .replace("__API_HOST__", _ws_host)
+        .replace("__API_HOST__", api_host_str)
+        .replace("__API_BASE__", api_base_str)
+        .replace("__WS_BASE_JSON__", json.dumps(ws_base_str))
         .replace("__INITIAL_FILES__", json.dumps(log_files))
         .replace("__FILE_SIZES__", json.dumps(file_sizes))
         .replace("__ROTATED_FILES__", json.dumps(rotated_files))
@@ -590,19 +622,11 @@ def render_fastapi_job_monitor(height: int = 800, exchange: str = "", job_type: 
     
     token = st.session_state["api_token"]
 
-    # Derive browser-usable hostname (0.0.0.0 is not routable from the browser)
-    _browser_host = "127.0.0.1"
-    try:
-        _req_host = st.context.headers.get("Host", "")
-        if _req_host:
-            _browser_host = _req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-
     # Build iframe URL with token and optional filters
     exchange_param = f"&exchange={exchange}" if exchange else ""
     job_type_param = f"&job_type={job_type}" if job_type else ""
-    iframe_url = f"http://{_browser_host}:{api_port}/app/jobs_monitor.html?token={token}{exchange_param}{job_type_param}"
+    _api_base_str, _api_host_str, app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
+    iframe_url = f"{app_base_str}/jobs_monitor.html?token={token}{exchange_param}{job_type_param}"
     _st_components.iframe(iframe_url, height=height, scrolling=True)
 
 
@@ -631,16 +655,7 @@ def render_fastapi_hl_data_actions() -> None:
 
     token = st.session_state["api_token"]
 
-    _browser_host = "127.0.0.1"
-    try:
-        _req_host = st.context.headers.get("Host", "")
-        if _req_host:
-            _browser_host = _req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-
-    api_host_str = f"{_browser_host}:{api_port}"
-    api_base_str = f"http://{_browser_host}:{api_port}/api"
+    api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
     # Read HTML template
     html_path = Path(__file__).parent / "frontend" / "hl_data_actions.html"
@@ -697,16 +712,7 @@ def render_fastapi_market_data_status(exchange: str) -> None:
     exchange_param = exchange.lower().strip()
 
     # Derive browser-usable hostname (0.0.0.0 is not routable from the browser)
-    _browser_host = "127.0.0.1"
-    try:
-        _req_host = st.context.headers.get("Host", "")
-        if _req_host:
-            _browser_host = _req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-
-    api_host_str = f"{_browser_host}:{api_port}"
-    api_base_str = f"http://{_browser_host}:{api_port}/api"
+    api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
     # Read HTML template and make element IDs unique per exchange
     html_path = Path(__file__).parent / "frontend" / "market_data_status.html"
@@ -770,15 +776,7 @@ def render_fastapi_gap_heatmap(exchange: str, dataset: str, coin: str) -> None:
     coin_param     = str(coin).strip()
 
     # Derive browser-usable hostname (0.0.0.0 is not routable from the browser)
-    _browser_host = "127.0.0.1"
-    try:
-        _req_host = st.context.headers.get("Host", "")
-        if _req_host:
-            _browser_host = _req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-
-    api_base_str   = f"http://{_browser_host}:{api_port}/api"
+    api_base_str, api_host_str, _app_base_str, _ws_base_str = _resolve_browser_fastapi_urls(api_port)
 
     html_path = Path(__file__).parent / "frontend" / "gap_heatmap.html"
     html_content = html_path.read_text(encoding="utf-8")
@@ -796,7 +794,7 @@ def render_fastapi_gap_heatmap(exchange: str, dataset: str, coin: str) -> None:
         .replace('data-exchange=""', f'data-exchange="{exchange_param}"')
         .replace('data-dataset=""',  f'data-dataset="{dataset_param}"')
         .replace('data-coin=""',     f'data-coin="{coin_param}"')
-        .replace('data-api-host=""', f'data-api-host="{_browser_host}:{api_port}"')
+        .replace('data-api-host=""', f'data-api-host="{api_host_str}"')
         .replace('data-api-base=""', f'data-api-base="{api_base_str}"')
     )
 
@@ -839,15 +837,8 @@ def nav_bridge() -> None:
         ).token
     token = st.session_state["api_token"]
 
-    # Build WS URL that the browser can reach
-    _browser_host = "127.0.0.1"
-    try:
-        req_host = st.context.headers.get("Host", "")
-        if req_host:
-            _browser_host = req_host.split(":")[0] or "127.0.0.1"
-    except Exception:
-        pass
-    ws_url = f"ws://{_browser_host}:{api_port}/ws/dashboard?token={token}"
+    _api_base_str, _api_host_str, _app_base_str, ws_base_str = _resolve_browser_fastapi_urls(api_port)
+    ws_url = f"{ws_base_str}/dashboard?token={token}"
 
     result = _nav_bridge_component(ws_url=ws_url, key="__nav_bridge__", default=None)
     if result and isinstance(result, dict):
@@ -961,4 +952,3 @@ def _handle_dashboard_action(action: str, params: dict) -> None:
     elif action == "refresh":
         st.session_state.dashboards = Dashboard().list_dashboards()
         st.rerun()
-
