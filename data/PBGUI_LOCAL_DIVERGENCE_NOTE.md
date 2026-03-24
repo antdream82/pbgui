@@ -2,11 +2,12 @@
 
 ## Summary
 
-PBGUI keeps three local divergences from upstream:
+PBGUI keeps four local divergences from upstream:
 
 1. Hyperliquid dashboard/data ingestion fixes
 2. PB7 metric UI exposure fixes
 3. Reverse-proxy-friendly dashboard/log viewer routing fixes
+4. PB7 optimize-result suite/scenario compatibility fixes
 
 These are UI/data-ingestion changes only. They do not change PB7 trading logic.
 
@@ -27,6 +28,17 @@ PB7 emits newer analysis metrics that upstream PBGUI does not fully expose acros
 ### Reverse-proxy dashboard/log routing
 
 Current deployment uses PBGUI behind a reverse proxy. Upstream paths still assume that some dashboard/log viewer flows can safely build browser URLs against `host:8000`. In proxy mode that can resolve to internal/local addresses instead of the browser-visible origin.
+
+### Optimize-result suite/scenario loading
+
+`Optimize Result -> BT selected` loads the selected `pareto/*.json` directly into the backtest editor. Some PB7 result payloads store suite metadata at the top level of `backtest`:
+
+- `backtest.scenarios`
+- `backtest.aggregate`
+- `backtest.include_base_scenario`
+- `backtest.base_label`
+
+PBGUI's editor primarily reads suite data from `backtest.suite.scenarios`, so those result payloads appeared to have empty scenarios even when the optimize run was a suite run.
 
 ## Current local divergence from upstream
 
@@ -91,6 +103,18 @@ Current kept behavior:
 4. Dashboard list loading does not depend on Streamlit session-state objects inside FastAPI routes.
 5. Standalone dashboard main page auto-loads the first available dashboard when `current` is empty.
 6. Log viewer, VPS monitor, and dashboard nav bridge accept relative `/ws` bases and resolve them against the browser-visible parent origin.
+
+### Optimize-result suite/scenario compatibility
+
+Files:
+- [Config.py](/app/pbgui/Config.py)
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [BacktestV7.py](/app/pbgui/BacktestV7.py)
+
+Current kept behavior:
+
+1. When a backtest/result payload contains top-level suite fields under `backtest`, PBGUI normalizes them into `backtest.suite` during load.
+2. `BT selected` from optimize results can reopen suite runs with scenario labels intact instead of showing an empty scenario table.
 
 ## Exact local patch behavior
 
@@ -201,6 +225,22 @@ Behavior:
 - `dashboard_main.html` auto-loads the first dashboard when available.
 - Log viewer / VPS monitor / nav bridge resolve relative websocket bases against the browser-visible origin.
 
+### Optimize-result suite/scenario normalization
+
+File:
+- [Config.py](/app/pbgui/Config.py)
+
+Function:
+- `Backtest.backtest` setter
+
+Behavior:
+- Before normal backtest parsing, if the payload has top-level suite fields such as `scenarios`, `aggregate`, `include_base_scenario`, or `base_label`, PBGUI builds/updates `backtest.suite` from those values.
+- If `suite_enabled` exists, it is also mapped into `suite.enabled` when needed.
+
+Effect:
+- Optimize pareto result files that use `backtest.scenarios` load into the backtest editor with scenarios intact.
+- `Optimize Result -> BT selected` no longer drops suite scenario information in the editor.
+
 ## Why the divergence is kept
 
 Without these local changes, PBGUI can show:
@@ -211,6 +251,7 @@ Without these local changes, PBGUI can show:
 - stale display uPnl even when latest price is already in the DB
 - PB7 metrics present in payloads but absent or misleadingly zero in the UI
 - proxy-mode dashboard and log pages trying to connect to internal `127.0.0.1:8000` or `localhost:8000` addresses
+- suite optimize results reopening in backtest editor with empty scenarios despite the result payload still containing scenario data
 
 ## What was intentionally not changed
 
@@ -233,6 +274,7 @@ Expected current runtime behavior:
 - Dashboard `uPnl` reflects latest DB price when available, not only the last stored position snapshot
 - Old optimize results with missing metrics show blanks rather than false zeros
 - Reverse-proxy access works when `/api/*`, `/ws/*`, `/app/*`, and `/health` are routed to port `8000`, with the remaining app traffic routed to Streamlit on `8501`
+- Loading a suite pareto result through `BT selected` shows populated scenario labels instead of an empty scenario list
 
 ## Operational guidance
 
@@ -243,6 +285,7 @@ When updating upstream:
 3. Re-check [pbgui_func.py](/app/pbgui/pbgui_func.py), [api/dashboard.py](/app/pbgui/api/dashboard.py), and [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py) if proxy-mode dashboard/log routing regresses.
 4. If `Information -> Dashboards` or log viewer fails again behind a proxy, verify `/api/*`, `/ws/*`, `/app/*`, and `/health` reach PBApiServer on port `8000`.
 5. If optimize metrics revert to `0`, inspect the actual pareto payload shape before changing UI keys.
+6. If suite results reopen with empty scenarios again, inspect whether PB7 changed the optimize-result schema away from `backtest.suite` or `backtest.scenarios`.
 
 ## Long-term proper fix
 
@@ -252,3 +295,4 @@ The proper long-term fix is to upstream these behaviors or replace them with cle
 - PBGUI should not need deployment-specific symbol-preservation logic for HIP-3.
 - PB7/PBGUI metric payload handling should converge so old-format optimize results do not require special missing-metric handling.
 - Dashboard/log viewer routing should be origin/path-based upstream by default, without direct `host:8000` assumptions in proxy mode.
+- PB7 optimize-result schema and PBGUI config loader should converge on one stable suite format so result reopening does not need compatibility normalization.

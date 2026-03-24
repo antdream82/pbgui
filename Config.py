@@ -1556,6 +1556,28 @@ class Backtest:
         return self._backtest
     @backtest.setter
     def backtest(self, new_backtest):
+        # PB7 optimize result / pareto payloads may store suite fields at the
+        # top level of `backtest` instead of under `backtest.suite`.
+        # Normalize that shape on load so the editor sees scenarios correctly.
+        if isinstance(new_backtest, dict):
+            top_level_suite_fields = any(
+                key in new_backtest
+                for key in ("scenarios", "aggregate", "include_base_scenario", "base_label")
+            )
+            if top_level_suite_fields:
+                normalized_suite = dict((new_backtest.get("suite") or {}) if isinstance(new_backtest.get("suite"), dict) else {})
+                if "enabled" not in normalized_suite and "suite_enabled" in new_backtest:
+                    normalized_suite["enabled"] = new_backtest.get("suite_enabled")
+                if "include_base_scenario" not in normalized_suite and "include_base_scenario" in new_backtest:
+                    normalized_suite["include_base_scenario"] = new_backtest.get("include_base_scenario")
+                if "base_label" not in normalized_suite and "base_label" in new_backtest:
+                    normalized_suite["base_label"] = new_backtest.get("base_label")
+                if "aggregate" not in normalized_suite and "aggregate" in new_backtest:
+                    normalized_suite["aggregate"] = new_backtest.get("aggregate")
+                if "scenarios" not in normalized_suite and "scenarios" in new_backtest:
+                    normalized_suite["scenarios"] = new_backtest.get("scenarios")
+                new_backtest = dict(new_backtest)
+                new_backtest["suite"] = normalized_suite
         if "balance_sample_divider" in new_backtest:
             self.balance_sample_divider = new_backtest["balance_sample_divider"]
         if "base_dir" in new_backtest:
