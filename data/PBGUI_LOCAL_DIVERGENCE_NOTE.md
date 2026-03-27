@@ -1,15 +1,16 @@
-# PBGUI Local Divergence Note
+# PBGUI / PB7 Local Divergence Note
 
 ## Summary
 
-PBGUI keeps four local divergences from upstream:
+Current local divergence spans both PBGUI and PB7:
 
-1. Hyperliquid dashboard/data ingestion fixes
-2. PB7 metric UI exposure fixes
-3. Reverse-proxy-friendly dashboard/log viewer routing fixes
-4. PB7 optimize-result suite/scenario compatibility fixes
+1. PB7 actual exposure metrics and scenario-aware optimize limits
+2. PBGUI metric/UI wiring for newer PB7 metrics
+3. Hyperliquid dashboard/data ingestion fixes
+4. Reverse-proxy-friendly dashboard/log viewer routing fixes
+5. PB7 optimize-result suite/scenario compatibility fixes
 
-These are UI/data-ingestion changes only. They do not change PB7 trading logic.
+These changes are not limited to PBGUI UI behavior. They include PB7 analysis and optimize-backend behavior, but they do not change PB7 live trading logic or Rust strategy math.
 
 ## Root cause
 
@@ -21,9 +22,13 @@ Current deployment uses Hyperliquid in a way upstream PBGUI does not handle clea
 - dashboard total balance is expected to reflect portfolio-level USDC total, not dex-only account value
 - HIP-3 symbols must preserve CCXT forms like `XYZ-XYZ100/USDC:USDC`
 
-### PB7 metric UI
+### PB7 metrics and optimize backend
 
-PB7 emits newer analysis metrics that upstream PBGUI does not fully expose across all supported result payload shapes.
+Local deployment uses PB7 metrics and optimize controls that upstream does not fully expose or evaluate by default:
+
+- realized long/short exposure metrics are needed, not only configured exposure-limit metrics
+- optimize limits need optional suite `scenario` targeting
+- PBGUI must expose these PB7 metrics consistently across supported payload shapes
 
 ### Reverse-proxy dashboard/log routing
 
@@ -41,6 +46,47 @@ Current deployment uses PBGUI behind a reverse proxy. Upstream paths still assum
 PBGUI's editor primarily reads suite data from `backtest.suite.scenarios`, so those result payloads appeared to have empty scenarios even when the optimize run was a suite run.
 
 ## Current local divergence from upstream
+
+### PB7 actual exposure metrics and scenario-aware limits
+
+Files:
+- [backtest.py](/app/pb7/src/backtest.py)
+- [config_utils.py](/app/pb7/src/config_utils.py)
+- [limit_utils.py](/app/pb7/src/limit_utils.py)
+- [optimize.py](/app/pb7/src/optimize.py)
+- [pareto_store.py](/app/pb7/src/pareto_store.py)
+- [iterative_backtester.py](/app/pb7/src/tools/iterative_backtester.py)
+
+Current kept behavior:
+
+1. PB7 analysis emits realized side exposure metrics:
+   - `wallet_exposure_mean_long`
+   - `wallet_exposure_median_long`
+   - `wallet_exposure_max_long`
+   - `wallet_exposure_mean_short`
+   - `wallet_exposure_median_short`
+   - `wallet_exposure_max_short`
+2. PB7 analysis emits actual-exposure-normalized metrics:
+   - `gain_per_actual_exposure`
+   - `adg_per_actual_exposure`
+   - `adg_w_per_actual_exposure`
+   - `mdg_per_actual_exposure`
+   - `mdg_w_per_actual_exposure`
+   - `gain_per_actual_exposure_long`
+   - `gain_per_actual_exposure_short`
+   - `adg_per_actual_exposure_long`
+   - `adg_per_actual_exposure_short`
+   - `adg_w_per_actual_exposure_long`
+   - `adg_w_per_actual_exposure_short`
+   - `mdg_per_actual_exposure_long`
+   - `mdg_per_actual_exposure_short`
+   - `mdg_w_per_actual_exposure_long`
+   - `mdg_w_per_actual_exposure_short`
+3. Short realized exposure is derived from `abs(twe_short)` because raw short TWE is signed negative.
+4. PB7 metric allow-lists and objective weight maps include the new actual exposure metrics.
+5. Optimize `limits` support an optional `scenario` field for suite runs.
+6. When `scenario` is set on a limit entry, `stat` is intentionally disallowed.
+7. Scenario-specific limit resolution works both during optimize runtime and during pareto-store reevaluation.
 
 ### Hyperliquid ingestion
 
