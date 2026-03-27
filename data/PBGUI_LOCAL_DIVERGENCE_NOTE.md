@@ -296,3 +296,398 @@ The proper long-term fix is to upstream these behaviors or replace them with cle
 - PB7/PBGUI metric payload handling should converge so old-format optimize results do not require special missing-metric handling.
 - Dashboard/log viewer routing should be origin/path-based upstream by default, without direct `host:8000` assumptions in proxy mode.
 - PB7 optimize-result schema and PBGUI config loader should converge on one stable suite format so result reopening does not need compatibility normalization.
+
+## 2026-03-26: Actual side exposure metrics for optimize limits
+
+### Context
+
+Existing `*_per_exposure_{long,short}` metrics divide by configured `bot.{side}.total_wallet_exposure_limit`, not by realized exposure observed during the backtest.
+
+### Local change
+
+- Added realized side exposure metrics derived from the backtest `twe_long` / `twe_short` state series:
+  - `wallet_exposure_mean_long`
+  - `wallet_exposure_median_long`
+  - `wallet_exposure_max_long`
+  - `wallet_exposure_mean_short`
+  - `wallet_exposure_median_short`
+  - `wallet_exposure_max_short`
+- Added realized-exposure-normalized return metrics:
+  - `adg_per_actual_exposure`, `adg_w_per_actual_exposure`
+  - `mdg_per_actual_exposure`, `mdg_w_per_actual_exposure`
+  - `gain_per_actual_exposure`
+  - `adg_per_actual_exposure_long`, `adg_per_actual_exposure_short`
+  - `adg_w_per_actual_exposure_long`, `adg_w_per_actual_exposure_short`
+  - `mdg_per_actual_exposure_long`, `mdg_per_actual_exposure_short`
+  - `mdg_w_per_actual_exposure_long`, `mdg_w_per_actual_exposure_short`
+  - `gain_per_actual_exposure_long`, `gain_per_actual_exposure_short`
+- Registered these metrics in PB7/PBGui metric registries so they can be used in optimize limits and appear in result payloads.
+- Short exposure uses `abs(twe_short)` because PB7 stores short TWE as signed negative in the raw state series.
+
+### Impact
+
+- Optimize/backtest analysis payloads now expose realized long/short exposure directly.
+- Optimize limits can target realized side exposure metrics instead of only configured TWEL-derived metrics.
+- Existing `*_per_exposure_*` metrics remain unchanged for backward compatibility.
+- Optimize limits now also accept an optional `scenario` field for suite runs.
+- When `scenario` is set, the limit resolves against that scenario label only and `stat` is intentionally disallowed.
+
+### Metric meaning
+
+- `*_per_exposure_{long,short}`:
+  - Denominator is configured `bot.{side}.total_wallet_exposure_limit`
+  - Use when the intent is "return relative to allowed max capital budget"
+- `*_per_actual_exposure_{long,short}`:
+  - Denominator is realized `wallet_exposure_mean_{side}`
+  - Use when the intent is "return relative to actual average deployed capital"
+- `*_per_actual_exposure`:
+  - Denominator is realized `total_wallet_exposure_mean`
+  - Use when the intent is "return relative to actual average deployed capital across both sides"
+- `wallet_exposure_mean/max/median_{long,short}`:
+  - Realized side exposure statistics from the backtest state series
+  - Use directly in optimize limits when capping or targeting actual long/short capital usage
+
+## Upstream full-pull reapply guide
+
+This section is intended for the case where upstream PBGUI/PB7 is pulled in full later and the local behavior in this document must be restored with minimal rediscovery work.
+
+### Recommended strategy
+
+Do not try to reapply everything at once without checking upstream behavior first.
+
+Recommended order:
+
+1. Pull upstream into `pb7` and `pbgui`
+2. Run the app once without local reapply patches
+3. Diff the updated upstream files against the behaviors documented here
+4. Reapply only the divergences still needed
+5. Verify runtime behavior before moving to the next divergence family
+
+Reason:
+
+- some local patches may already be present upstream later
+- some local patches may need to move because upstream refactored file boundaries
+- the highest-risk conflicts are in config/optimize/metric wiring, so reapplying in smaller slices is safer
+
+### Reapply order
+
+Reapply in this order unless there is a strong reason not to:
+
+1. PB7 metric and optimize backend changes
+2. PBGui metric registry and UI wiring
+3. Optimize-result suite/scenario compatibility
+4. Hyperliquid data/dashboard behavior
+5. Reverse-proxy routing behavior
+6. Help text and divergence documentation cleanup
+
+This order matters because:
+
+- PBGui metric UI depends on PB7 metric names existing
+- optimize-result compatibility is isolated and can be checked independently
+- Hyperliquid and reverse-proxy changes are deployment-specific and should be applied last
+
+### Files to inspect first after upstream pull
+
+PB7:
+
+- [backtest.py](/app/pb7/src/backtest.py)
+- [config_utils.py](/app/pb7/src/config_utils.py)
+- [limit_utils.py](/app/pb7/src/limit_utils.py)
+- [optimize.py](/app/pb7/src/optimize.py)
+- [pareto_store.py](/app/pb7/src/pareto_store.py)
+- [iterative_backtester.py](/app/pb7/src/tools/iterative_backtester.py)
+
+PBGui:
+
+- [Config.py](/app/pbgui/Config.py)
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [ParetoExplorer.py](/app/pbgui/ParetoExplorer.py)
+- [BacktestV7.py](/app/pbgui/BacktestV7.py)
+- [pbgui_help.py](/app/pbgui/pbgui_help.py)
+- [Exchange.py](/app/pbgui/Exchange.py)
+- [Database.py](/app/pbgui/Database.py)
+- [PBData.py](/app/pbgui/PBData.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+- [pbgui_func.py](/app/pbgui/pbgui_func.py)
+- [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py)
+- [frontend/dashboard_main.html](/app/pbgui/frontend/dashboard_main.html)
+- [components/log_viewer/index.html](/app/pbgui/components/log_viewer/index.html)
+- [components/vps_monitor/index.html](/app/pbgui/components/vps_monitor/index.html)
+- [components/nav_bridge/index.html](/app/pbgui/components/nav_bridge/index.html)
+
+### Reapply package 1: PB7 actual exposure metrics and scenario-aware limits
+
+Goal:
+
+- restore actual long/short exposure metrics
+- restore actual-exposure-normalized return metrics
+- restore suite `limits[].scenario`
+
+Files:
+
+- [backtest.py](/app/pb7/src/backtest.py)
+- [config_utils.py](/app/pb7/src/config_utils.py)
+- [limit_utils.py](/app/pb7/src/limit_utils.py)
+- [optimize.py](/app/pb7/src/optimize.py)
+- [pareto_store.py](/app/pb7/src/pareto_store.py)
+- [iterative_backtester.py](/app/pb7/src/tools/iterative_backtester.py)
+
+Required behavior:
+
+1. Backtest analysis must emit:
+   - `wallet_exposure_mean_long`
+   - `wallet_exposure_median_long`
+   - `wallet_exposure_max_long`
+   - `wallet_exposure_mean_short`
+   - `wallet_exposure_median_short`
+   - `wallet_exposure_max_short`
+2. Backtest analysis must emit:
+   - `gain_per_actual_exposure`
+   - `adg_per_actual_exposure`
+   - `adg_w_per_actual_exposure`
+   - `mdg_per_actual_exposure`
+   - `mdg_w_per_actual_exposure`
+3. Backtest analysis must emit:
+   - `gain_per_actual_exposure_long`
+   - `gain_per_actual_exposure_short`
+   - `adg_per_actual_exposure_long`
+   - `adg_per_actual_exposure_short`
+   - `adg_w_per_actual_exposure_long`
+   - `adg_w_per_actual_exposure_short`
+   - `mdg_per_actual_exposure_long`
+   - `mdg_per_actual_exposure_short`
+   - `mdg_w_per_actual_exposure_long`
+   - `mdg_w_per_actual_exposure_short`
+4. Short realized exposure must be computed from `abs(twe_short)`, not from positive clamp logic
+5. New metrics must be registered in PB7 metric allow-lists and scoring weights
+6. `optimize.limits[]` must support optional `scenario`
+7. If `scenario` is set, `stat` must be rejected
+8. Scenario-specific limits must resolve against the selected suite scenario label in both optimize runtime and pareto-store reevaluation
+
+Implementation notes:
+
+- `backtest.py` is the source of truth for metric computation
+- `config_utils.py` is the highest-conflict file because upstream also changes config cleaning and limit preservation there
+- if upstream later adds its own `optimize.limits` preservation helpers, keep those and reapply only:
+  - `scenario` field preservation
+  - `scenario` plus `stat` validation
+- `pareto_store.py` must be checked separately because optimize-time and post-hoc pareto-limit reevaluation use different code paths
+
+Minimum verification:
+
+1. Run a synthetic or local backtest payload through analysis expansion and confirm all new metric keys are present
+2. Confirm `wallet_exposure_mean_short` is nonzero for a test case where raw `twe_short` is negative but active
+3. Confirm a limit such as:
+   - `{"metric":"drawdown_worst_usd","scenario":"Stress_COVID","penalize_if":"greater_than","value":0.25}`
+   is accepted
+4. Confirm:
+   - `{"metric":"drawdown_worst_usd","scenario":"Stress_COVID","stat":"max","penalize_if":"greater_than","value":0.25}`
+   raises an error
+5. Confirm pareto reevaluation resolves scenario-specific values instead of aggregate stats only
+
+### Reapply package 2: PBGui metric registry, score/limit exposure, and presets
+
+Goal:
+
+- make the PB7 metrics visible and selectable in PBGui
+- keep metric descriptions accurate
+- keep exposure-related explorer presets aligned with actual exposure metrics
+
+Files:
+
+- [Config.py](/app/pbgui/Config.py)
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [ParetoExplorer.py](/app/pbgui/ParetoExplorer.py)
+- [BacktestV7.py](/app/pbgui/BacktestV7.py)
+- [pbgui_help.py](/app/pbgui/pbgui_help.py)
+
+Required behavior:
+
+1. Metric registry exposes all new actual exposure metrics
+2. Aggregate metric registry includes:
+   - `wallet_exposure_mean_long`
+   - `wallet_exposure_median_long`
+   - `wallet_exposure_max_long`
+   - `wallet_exposure_mean_short`
+   - `wallet_exposure_median_short`
+   - `wallet_exposure_max_short`
+3. Metric descriptions clearly distinguish:
+   - configured exposure limit based metrics
+   - realized actual exposure based metrics
+4. Optimize `limits` editor includes a `Scenario` selector
+5. When `Scenario` is selected, `Stat` is disabled
+6. Pareto explorer efficiency presets prefer actual exposure metrics where intended
+7. Backtest/optimize UI should leave truly missing old-format values blank instead of forcing misleading `0`
+
+Implementation notes:
+
+- [Config.py](/app/pbgui/Config.py) is the primary source of PBGui metric definitions
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py) uses registry-driven metric options, so missing metrics there usually mean the registry was not restored correctly
+- [ParetoExplorer.py](/app/pbgui/ParetoExplorer.py) must be checked if presets silently revert to configured-limit metrics
+
+Minimum verification:
+
+1. Open PBGui and confirm new metrics appear in score/limit selectors
+2. Confirm `Scenario` dropdown appears in suite optimize limit editing
+3. Confirm selecting a scenario disables `Stat`
+4. Confirm Pareto explorer can use actual exposure preset metrics without blank axes or missing-key errors
+
+### Reapply package 3: Optimize-result suite/scenario compatibility
+
+Goal:
+
+- preserve the ability to reopen suite optimize results through `BT selected`
+
+Files:
+
+- [Config.py](/app/pbgui/Config.py)
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [BacktestV7.py](/app/pbgui/BacktestV7.py)
+
+Required behavior:
+
+1. If a result payload stores suite data as top-level `backtest.scenarios`, `backtest.aggregate`, `backtest.include_base_scenario`, `backtest.base_label`, or `backtest.suite_enabled`, load-time normalization must rebuild `backtest.suite`
+2. `Optimize Result -> BT selected` must reopen the result with populated scenario rows
+
+Implementation notes:
+
+- the critical logic lives in the [Config.py](/app/pbgui/Config.py) backtest loader
+- this patch is independent from the actual exposure work and can be restored separately
+
+Minimum verification:
+
+1. Load a known suite pareto result JSON that uses top-level `backtest.scenarios`
+2. Trigger `BT selected`
+3. Confirm scenario labels are present in the backtest editor
+
+### Reapply package 4: Hyperliquid data/dashboard behavior
+
+Goal:
+
+- restore the current deployment's Hyperliquid-specific data correctness behavior
+
+Files:
+
+- [Exchange.py](/app/pbgui/Exchange.py)
+- [Database.py](/app/pbgui/Database.py)
+- [PBData.py](/app/pbgui/PBData.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+
+Required behavior:
+
+1. Hyperliquid total balance prefers `fetch_balance(type="spot") -> total["USDC"]`
+2. Hyperliquid positions retry with `params={"dex":"xyz"}` when default scope is empty
+3. Hyperliquid balance/position updates are treated as REST/shared polling behavior, not websocket-driven watcher behavior
+4. Hyperliquid symbol mapping preserves valid CCXT HIP-3 symbols
+5. Dashboard API display-side `uPnl` is recalculated from latest DB price when available
+
+Implementation notes:
+
+- these changes are deployment-specific and may or may not belong upstream later
+- if upstream changes Hyperliquid adapters substantially, verify behavior rather than matching old code literally
+
+Minimum verification:
+
+1. Hyperliquid balance in DB/API is near expected portfolio-level USDC total
+2. Position rows exist when live positions exist
+3. Order rows exist when live orders exist
+4. No `BadSymbol` errors occur for HIP-3 symbols
+5. Dashboard `uPnl` reflects current DB price rather than only stored snapshot values
+
+### Reapply package 5: Reverse-proxy-friendly dashboard and log routing
+
+Goal:
+
+- preserve same-origin proxy-safe behavior for dashboard and log-related pages
+
+Files:
+
+- [pbgui_func.py](/app/pbgui/pbgui_func.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+- [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py)
+- [frontend/dashboard_main.html](/app/pbgui/frontend/dashboard_main.html)
+- [components/log_viewer/index.html](/app/pbgui/components/log_viewer/index.html)
+- [components/vps_monitor/index.html](/app/pbgui/components/vps_monitor/index.html)
+- [components/nav_bridge/index.html](/app/pbgui/components/nav_bridge/index.html)
+
+Required behavior:
+
+1. Reverse-proxy mode uses browser-facing same-origin `/api`, `/app`, and `/ws`
+2. Direct `:8501` access still supports explicit `host:8000` API/WS targets
+3. Dashboard main page does not derive proxy browser URLs from internal server request assumptions
+4. Dashboard list loading does not depend on Streamlit session state inside FastAPI routes
+5. Dashboard main page auto-loads the first available dashboard when no explicit dashboard is selected
+6. Log viewer, VPS monitor, and nav bridge accept relative websocket bases
+
+Minimum verification:
+
+1. Through proxy, dashboard main page loads without trying to hit `127.0.0.1:8000` or `localhost:8000`
+2. Through proxy, log viewer websocket connects successfully
+3. Through proxy, dashboard list is populated
+4. Through direct `:8501` access, old direct mode still works
+
+### Reapply package 6: Documentation and help text
+
+Goal:
+
+- keep the user-facing meaning of the local divergence understandable
+- avoid future rediscovery work
+
+Files:
+
+- [pbgui_help.py](/app/pbgui/pbgui_help.py)
+- [PBGUI_LOCAL_DIVERGENCE_NOTE.md](/app/pbgui/data/PBGUI_LOCAL_DIVERGENCE_NOTE.md)
+
+Required behavior:
+
+1. Help text explains configured exposure versus actual exposure metrics
+2. Help text explains scenario-specific limits and the `stat` restriction
+3. This divergence note remains current after any reapply pass
+
+### Conflict hotspots to expect
+
+These files are the most likely merge-conflict or semantic-conflict points after a future full upstream pull:
+
+- [config_utils.py](/app/pb7/src/config_utils.py)
+- [optimize.py](/app/pb7/src/optimize.py)
+- [Config.py](/app/pbgui/Config.py)
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+
+Why:
+
+- `config_utils.py` changes frequently upstream for config normalization and template cleanup
+- `optimize.py` changes whenever scoring/fitness/limits behavior moves
+- `Config.py` is the PBGui metric registry and config parsing hub
+- `OptimizeV7.py` is the PBGui limit UI and often changes with form/state refactors
+- `api/dashboard.py` is a natural conflict point for deployment-specific routing/data behavior
+
+### Suggested reapply workflow
+
+Use this workflow for the least painful future reapply:
+
+1. Create a temporary branch after the full upstream pull
+2. Restore PB7 backend package first
+3. Run targeted PB7 verification before touching PBGui
+4. Restore PBGui metric/UI package
+5. Verify optimize/backtest screens
+6. Restore suite-result compatibility patch
+7. Verify `BT selected`
+8. Restore Hyperliquid behavior
+9. Verify dashboard data correctness
+10. Restore reverse-proxy behavior
+11. Verify proxy and direct-access modes separately
+12. Update this note with any path or function moves discovered during reapply
+
+### Suggested commit split
+
+If reapplying after a full upstream pull, keep the work split into separate commits:
+
+1. `pb7: restore actual exposure metrics and scenario-aware limits`
+2. `pbgui: restore actual exposure metric registry and scenario limit ui`
+3. `pbgui: restore suite optimize-result scenario normalization`
+4. `pbgui: restore hyperliquid dashboard/data behavior`
+5. `pbgui: restore reverse-proxy dashboard/log routing`
+6. `docs: update local divergence note`
+
+This makes the next future reapply much easier because each divergence family stays isolated.
