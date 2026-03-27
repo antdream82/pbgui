@@ -958,7 +958,12 @@ limits = """
                                   and its recency-biased counterpart
     mdg, mdg_w                    Median Daily Gain and recency-biased variant
     gain                          Final balance gain (end/start ratio)
-    *_per_exposure_{long,short}   Above metrics divided by exposure limit per side
+    *_per_actual_exposure         Above metrics divided by realized mean
+                                  total_wallet_exposure
+    *_per_exposure_{long,short}   Above metrics divided by configured
+                                  total_wallet_exposure_limit per side
+    *_per_actual_exposure_{...}   Above metrics divided by realized mean
+                                  wallet_exposure per side
     
     ═══════════════════════════════════════════════════════════════════════
     RISK METRICS (currency metrics - append _usd or _btc):
@@ -1058,6 +1063,9 @@ limits_stat = """
     median  Use the median value
     
     Leave empty to use the default based on penalize_if mode.
+    
+    If a specific scenario is selected for the limit, Stat is disabled.
+    Scenario-specific limits use that scenario's aggregated metric value directly.
     ```"""
 
 population_size = """
@@ -2374,4 +2382,3 @@ add_scenario_override_button = """
 add_scenario_button = """
     Add new scenario to the suite.
     Scenarios allow testing the same config across different market conditions."""
-

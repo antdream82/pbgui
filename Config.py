@@ -111,35 +111,86 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         group="Returns & Growth",
         has_currency=True,
         weighted_variant="adg_w_per_exposure_long",
-        description="ADG normalized by long exposure limit (plus weighted variant).",
+        description="ADG normalized by configured long total wallet exposure limit (plus weighted variant).",
     ),
     "adg_per_exposure_short": MetricDef(
         group="Returns & Growth",
         has_currency=True,
         weighted_variant="adg_w_per_exposure_short",
-        description="ADG normalized by short exposure limit (plus weighted variant).",
+        description="ADG normalized by configured short total wallet exposure limit (plus weighted variant).",
     ),
     "mdg_per_exposure_long": MetricDef(
         group="Returns & Growth",
         has_currency=True,
         weighted_variant="mdg_w_per_exposure_long",
-        description="MDG normalized by long exposure limit (plus weighted variant).",
+        description="MDG normalized by configured long total wallet exposure limit (plus weighted variant).",
     ),
     "mdg_per_exposure_short": MetricDef(
         group="Returns & Growth",
         has_currency=True,
         weighted_variant="mdg_w_per_exposure_short",
-        description="MDG normalized by short exposure limit (plus weighted variant).",
+        description="MDG normalized by configured short total wallet exposure limit (plus weighted variant).",
     ),
     "gain_per_exposure_long": MetricDef(
         group="Returns & Growth",
         has_currency=True,
-        description="Gain normalized by long exposure limit.",
+        description="Gain normalized by configured long total wallet exposure limit.",
     ),
     "gain_per_exposure_short": MetricDef(
         group="Returns & Growth",
         has_currency=True,
-        description="Gain normalized by short exposure limit.",
+        description="Gain normalized by configured short total wallet exposure limit.",
+    ),
+    "adg_per_actual_exposure": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="adg_w_per_actual_exposure",
+        description="ADG normalized by realized mean total wallet exposure (plus weighted variant).",
+    ),
+    "mdg_per_actual_exposure": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="mdg_w_per_actual_exposure",
+        description="MDG normalized by realized mean total wallet exposure (plus weighted variant).",
+    ),
+    "gain_per_actual_exposure": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        description="Gain normalized by realized mean total wallet exposure.",
+    ),
+    "adg_per_actual_exposure_long": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="adg_w_per_actual_exposure_long",
+        description="ADG normalized by realized mean long exposure (plus weighted variant).",
+    ),
+    "adg_per_actual_exposure_short": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="adg_w_per_actual_exposure_short",
+        description="ADG normalized by realized mean short exposure (plus weighted variant).",
+    ),
+    "mdg_per_actual_exposure_long": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="mdg_w_per_actual_exposure_long",
+        description="MDG normalized by realized mean long exposure (plus weighted variant).",
+    ),
+    "mdg_per_actual_exposure_short": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="mdg_w_per_actual_exposure_short",
+        description="MDG normalized by realized mean short exposure (plus weighted variant).",
+    ),
+    "gain_per_actual_exposure_long": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        description="Gain normalized by realized mean long exposure.",
+    ),
+    "gain_per_actual_exposure_short": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        description="Gain normalized by realized mean short exposure.",
     ),
 
     # Risk Metrics
@@ -519,6 +570,36 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=False,
         description="Average total wallet exposure over the run (lower is generally safer).",
     ),
+    "wallet_exposure_mean_long": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Average realized long wallet exposure over the run.",
+    ),
+    "wallet_exposure_median_long": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Median realized long wallet exposure over the run.",
+    ),
+    "wallet_exposure_max_long": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Maximum realized long wallet exposure over the run.",
+    ),
+    "wallet_exposure_mean_short": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Average realized short wallet exposure over the run.",
+    ),
+    "wallet_exposure_median_short": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Median realized short wallet exposure over the run.",
+    ),
+    "wallet_exposure_max_short": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Maximum realized short wallet exposure over the run.",
+    ),
 }
 
 
@@ -723,7 +804,9 @@ def get_aggregate_metrics():
     for m in ["sharpe_ratio", "sharpe_ratio_w", "sortino_ratio", "sortino_ratio_w", 
               "loss_profit_ratio", "loss_profit_ratio_w", "positions_held_per_day",
               "position_held_hours_max", "position_held_hours_mean", "position_held_hours_median",
-              "position_unchanged_hours_max", "peak_recovery_hours_pnl", "total_wallet_exposure_mean"]:
+              "position_unchanged_hours_max", "peak_recovery_hours_pnl", "total_wallet_exposure_mean",
+              "wallet_exposure_mean_long", "wallet_exposure_median_long", "wallet_exposure_max_long",
+              "wallet_exposure_mean_short", "wallet_exposure_median_short", "wallet_exposure_max_short"]:
         if m in SHARED_METRICS:
             metrics.append(m)
     # Add ratio metrics with currency suffixes

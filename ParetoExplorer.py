@@ -2750,7 +2750,11 @@ class ParetoExplorer:
                     if base in CURRENCY_METRICS:
                         # Check if base already has the weighted suffix (_w)
                         # Must check for _w as suffix, not as part of the name (e.g., drawdown_worst)
-                        has_w_suffix = base.endswith('_w') or '_w_per_exposure_' in base
+                        has_w_suffix = (
+                            base.endswith('_w')
+                            or '_w_per_exposure_' in base
+                            or '_w_per_actual_exposure_' in base
+                        )
                         
                         if use_weighted and not has_w_suffix:
                             # Try to add _w, but first check if weighted variant exists in Config.py
@@ -2765,7 +2769,9 @@ class ParetoExplorer:
                             if base.endswith('_w'):
                                 base_without_w = base[:-2]  # Remove last 2 chars (_w)
                             else:
-                                base_without_w = base.replace('_w_per_exposure_', '_per_exposure_')
+                                base_without_w = base.replace('_w_per_actual_exposure_', '_per_actual_exposure_')
+                                if base_without_w == base:
+                                    base_without_w = base.replace('_w_per_exposure_', '_per_exposure_')
                             return f"{base_without_w}_{currency}"
                         else:
                             # Already correct: either both have _w or both don't
@@ -2796,7 +2802,7 @@ class ParetoExplorer:
                     st.session_state['prev_toggle_state'] = current_toggle_state
                 
                 # For efficiency preset: use correct exposure metric based on weighted toggle
-                exposure_metric = 'adg_w_per_exposure_long' if use_weighted else 'adg_per_exposure_long'
+                exposure_metric = 'adg_w_per_actual_exposure_long' if use_weighted else 'adg_per_actual_exposure_long'
                 
                 preset_options = [
                     "**Profit vs Risk**",
@@ -2940,7 +2946,7 @@ class ParetoExplorer:
                     
                     # Dynamic defaults based on toggles
                     default_x = f'adg{suffix}_{currency}'
-                    default_y = f'adg_per_exposure_long{suffix}_{currency}'
+                    default_y = f'adg_per_actual_exposure_long{suffix}_{currency}'
                     
                     # Find indices for defaults
                     x_index = filtered_metrics.index(default_x) if default_x in filtered_metrics else 0
@@ -2978,7 +2984,11 @@ class ParetoExplorer:
                 def metric(base):
                     """Build full metric name with suffix and currency if needed"""
                     if base in CURRENCY_METRICS:
-                        has_w_suffix = base.endswith('_w') or '_w_per_exposure_' in base
+                        has_w_suffix = (
+                            base.endswith('_w')
+                            or '_w_per_exposure_' in base
+                            or '_w_per_actual_exposure_' in base
+                        )
                         
                         if use_weighted and not has_w_suffix:
                             base_with_w = f"{base}_w"
@@ -2990,7 +3000,9 @@ class ParetoExplorer:
                             if base.endswith('_w'):
                                 base_without_w = base[:-2]
                             else:
-                                base_without_w = base.replace('_w_per_exposure_', '_per_exposure_')
+                                base_without_w = base.replace('_w_per_actual_exposure_', '_per_actual_exposure_')
+                                if base_without_w == base:
+                                    base_without_w = base.replace('_w_per_exposure_', '_per_exposure_')
                             return f"{base_without_w}_{currency}"
                         else:
                             return f"{base}_{currency}"
@@ -2999,7 +3011,7 @@ class ParetoExplorer:
                     else:
                         return f"{base}{suffix}_{currency}"
                 
-                exposure_metric = 'adg_w_per_exposure_long' if use_weighted else 'adg_per_exposure_long'
+                exposure_metric = 'adg_w_per_actual_exposure_long' if use_weighted else 'adg_per_actual_exposure_long'
                 
                 # 3D Presets - Expanded logic similar to 2D presets
                 preset_3d_options = [

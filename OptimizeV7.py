@@ -5153,6 +5153,7 @@ class OptimizeV7Item(ConfigV7Editor):
         # Use centralized metrics from Config module
         ALL_BASE_METRICS = get_all_metrics_list()
         CURRENCY_METRICS_SET = CURRENCY_METRICS
+        SCENARIO_OPTIONS = self._get_limit_scenario_options()
         
         PENALIZE_IF_OPTIONS = ["greater_than", "less_than", "outside_range", "inside_range", "auto"]
         STAT_OPTIONS = ["", "mean", "min", "max", "std"]
@@ -5197,6 +5198,7 @@ class OptimizeV7Item(ConfigV7Editor):
                     
                     limits_display_data.append({
                         "metric": metric,
+                        "scenario": entry.get("scenario", ""),
                         "penalize_if": penalize_if,
                         "stat": stat,
                         "value": value_str,
@@ -5210,6 +5212,7 @@ class OptimizeV7Item(ConfigV7Editor):
                 d = st.session_state.limits_display_data
                 column_config = {
                     "metric": st.column_config.TextColumn("Metric", width="medium"),
+                    "scenario": st.column_config.TextColumn("Scenario", width="medium"),
                     "penalize_if": st.column_config.TextColumn("Penalize If", width="small"),
                     "stat": st.column_config.TextColumn("Stat", width="small"),
                     "value": st.column_config.TextColumn("Value", width="small"),
@@ -5226,10 +5229,10 @@ class OptimizeV7Item(ConfigV7Editor):
                 limits_list = self.config.optimize.limits
                 if 0 <= idx < len(limits_list):
                     entry = limits_list[idx]
-                    self._edit_single_limit(entry, idx, ALL_BASE_METRICS, CURRENCY_METRICS_SET, CURRENCY_OPTIONS, PENALIZE_IF_OPTIONS, STAT_OPTIONS)
+                    self._edit_single_limit(entry, idx, ALL_BASE_METRICS, CURRENCY_METRICS_SET, CURRENCY_OPTIONS, PENALIZE_IF_OPTIONS, STAT_OPTIONS, SCENARIO_OPTIONS)
             else:
                 # Add new limit UI
-                self._add_new_limit_ui(ALL_BASE_METRICS, CURRENCY_METRICS_SET, CURRENCY_OPTIONS, PENALIZE_IF_OPTIONS, STAT_OPTIONS)
+                self._add_new_limit_ui(ALL_BASE_METRICS, CURRENCY_METRICS_SET, CURRENCY_OPTIONS, PENALIZE_IF_OPTIONS, STAT_OPTIONS, SCENARIO_OPTIONS)
     
     def _format_limit_display(self, entry: dict) -> str:
         """Format a limit entry for display in the table."""
@@ -5245,9 +5248,27 @@ class OptimizeV7Item(ConfigV7Editor):
             value = entry.get("value", 0)
             return f"{metric}{stat_str} {penalize_if} {value}"
 
+    def _get_limit_scenario_options(self):
+        labels = [""]
+        suite = self.config.backtest.suite
+        if suite.include_base_scenario:
+            labels.append(suite.base_label or "base")
+        for scenario in suite.scenarios or []:
+            label = getattr(scenario, "label", None)
+            if label:
+                labels.append(label)
+        # de-dup while preserving order
+        out = []
+        seen = set()
+        for label in labels:
+            if label not in seen:
+                out.append(label)
+                seen.add(label)
+        return out
+
     # Limits metric filtering is driven by docs-aligned groups from Config metric registry.
     
-    def _edit_single_limit(self, entry: dict, idx: int, base_metrics: list, currency_metrics_set: set, currency_options: list, penalize_options: list, stat_options: list):
+    def _edit_single_limit(self, entry: dict, idx: int, base_metrics: list, currency_metrics_set: set, currency_options: list, penalize_options: list, stat_options: list, scenario_options: list):
         """UI for editing a single limit entry with split metric/currency selection."""
         st.subheader(f"Edit Limit #{idx + 1}")
         
@@ -5286,6 +5307,7 @@ class OptimizeV7Item(ConfigV7Editor):
         # Get current values
         current_penalize = entry.get("penalize_if", "greater_than")
         current_stat = entry.get("stat", "")
+        current_scenario = entry.get("scenario", "")
         is_range = current_penalize in ("outside_range", "inside_range")
 
         LIMIT_TYPE_OPTIONS = ["all"] + list(get_metric_groups())
@@ -5301,9 +5323,9 @@ class OptimizeV7Item(ConfigV7Editor):
         
         # Dynamic column layout
         if is_range:
-            col_type, col1, col2, col3, col4, col5, col6 = st.columns([0.9, 1.5, 0.6, 1, 0.6, 0.8, 0.8])
+            col_type, col1, col2, col_scenario, col3, col4, col5, col6 = st.columns([0.9, 1.4, 0.6, 1.0, 1, 0.6, 0.8, 0.8])
         else:
-            col_type, col1, col2, col3, col4, col5 = st.columns([0.9, 1.5, 0.6, 1, 0.6, 1])
+            col_type, col1, col2, col_scenario, col3, col4, col5 = st.columns([0.9, 1.4, 0.6, 1.0, 1, 0.6, 1])
 
         with col_type:
             selected_type = st.selectbox(
@@ -5345,6 +5367,19 @@ class OptimizeV7Item(ConfigV7Editor):
             else:
                 st.write("")  # Empty placeholder
                 new_currency = None
+
+        with col_scenario:
+            if current_scenario not in scenario_options:
+                scenario_options = list(scenario_options) + [current_scenario]
+            scenario_idx = scenario_options.index(current_scenario) if current_scenario in scenario_options else 0
+            new_scenario = st.selectbox(
+                "Scenario",
+                scenario_options,
+                index=scenario_idx,
+                key="edit_limit_scenario",
+                format_func=lambda x: x if x else "(aggregate)",
+                help="Optional suite scenario label. When set, this limit targets that scenario only and Stat is disabled.",
+            )
         
         with col3:
             penalize_idx = penalize_options.index(current_penalize) if current_penalize in penalize_options else 0
@@ -5352,7 +5387,10 @@ class OptimizeV7Item(ConfigV7Editor):
         
         with col4:
             stat_idx = stat_options.index(current_stat) if current_stat in stat_options else 0
-            new_stat = st.selectbox("Stat", stat_options, index=stat_idx, key="edit_limit_stat", help=pbgui_help.limits_stat)
+            scenario_active = bool(new_scenario)
+            if scenario_active and current_stat:
+                stat_idx = 0
+            new_stat = st.selectbox("Stat", stat_options, index=stat_idx, key="edit_limit_stat", help=pbgui_help.limits_stat, disabled=scenario_active)
         
         # Combine base + currency for final metric
         if new_is_currency and new_currency:
@@ -5377,7 +5415,9 @@ class OptimizeV7Item(ConfigV7Editor):
         with col1:
             if st.button("OK", key="edit_limit_save"):
                 new_entry = {"metric": new_metric, "penalize_if": new_penalize}
-                if new_stat:
+                if new_scenario:
+                    new_entry["scenario"] = new_scenario
+                if new_stat and not new_scenario:
                     new_entry["stat"] = new_stat
                 if new_penalize in ("outside_range", "inside_range"):
                     new_entry["range"] = [range_low, range_high]
@@ -5401,7 +5441,7 @@ class OptimizeV7Item(ConfigV7Editor):
                 self.clean_limits_session_state()
                 st.rerun()
 
-    def _add_new_limit_ui(self, base_metrics: list, currency_metrics_set: set, currency_options: list, penalize_options: list, stat_options: list):
+    def _add_new_limit_ui(self, base_metrics: list, currency_metrics_set: set, currency_options: list, penalize_options: list, stat_options: list, scenario_options: list):
         """UI for adding a new limit with split metric/currency selection."""
         st.subheader("Add New Limit")
 
@@ -5424,9 +5464,9 @@ class OptimizeV7Item(ConfigV7Editor):
         
         # Dynamic column layout
         if is_range:
-            col_type, col1, col2, col3, col4, col5, col6, col7 = st.columns([0.7, 1, 0.4, 0.7, 0.4, 0.6, 0.6, 0.6], vertical_alignment="bottom")
+            col_type, col1, col2, col_scenario, col3, col4, col5, col6, col7 = st.columns([0.7, 1, 0.4, 0.9, 0.7, 0.4, 0.6, 0.6, 0.6], vertical_alignment="bottom")
         else:
-            col_type, col1, col2, col3, col4, col5, col6 = st.columns([0.7, 1.2, 0.5, 0.9, 0.5, 2.3, 0.6], vertical_alignment="bottom")
+            col_type, col1, col2, col_scenario, col3, col4, col5, col6 = st.columns([0.7, 1.2, 0.5, 0.9, 0.9, 0.5, 2.3, 0.6], vertical_alignment="bottom")
 
         with col_type:
             selected_type = st.selectbox(
@@ -5465,12 +5505,21 @@ class OptimizeV7Item(ConfigV7Editor):
             else:
                 st.write("")  # Empty placeholder
                 new_currency = None
+
+        with col_scenario:
+            new_scenario = st.selectbox(
+                "Scenario",
+                scenario_options,
+                key="add_limit_scenario",
+                format_func=lambda x: x if x else "(aggregate)",
+                help="Optional suite scenario label. When set, this limit targets that scenario only and Stat is disabled.",
+            )
         
         with col3:
             new_penalize = st.selectbox("Penalize If", penalize_options, key="add_limit_penalize", help=pbgui_help.limits_penalize_if)
         
         with col4:
-            new_stat = st.selectbox("Stat", stat_options, key="add_limit_stat", help=pbgui_help.limits_stat)
+            new_stat = st.selectbox("Stat", stat_options, key="add_limit_stat", help=pbgui_help.limits_stat, disabled=bool(new_scenario))
         
         if is_range:
             with col5:
@@ -5495,8 +5544,11 @@ class OptimizeV7Item(ConfigV7Editor):
                 final_metric = final_base
             
             new_entry = {"metric": final_metric, "penalize_if": st.session_state.get("add_limit_penalize", "greater_than")}
+            scenario_val = st.session_state.get("add_limit_scenario", "")
+            if scenario_val:
+                new_entry["scenario"] = scenario_val
             stat_val = st.session_state.get("add_limit_stat", "")
-            if stat_val:
+            if stat_val and not scenario_val:
                 new_entry["stat"] = stat_val
             if st.session_state.get("add_limit_penalize", "greater_than") in ("outside_range", "inside_range"):
                 new_entry["range"] = [st.session_state.get("add_limit_range_low", 0.0), st.session_state.get("add_limit_range_high", 1.0)]
