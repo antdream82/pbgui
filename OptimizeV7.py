@@ -851,6 +851,7 @@ class OptimizeV7Results:
                             'adg_over_ui': get_metric_value("adg_over_ui_usd"),
                             'gain_over_ui': get_metric_value("gain_over_ui_usd"),
                             'gain': get_metric_value("gain_usd"),
+                            'gain_per_actual_exposure': get_metric_value("gain_per_actual_exposure_usd", None),
                             'total_wallet_exposure_mean': get_metric_value("total_wallet_exposure_mean"),
                             'sharpe_ratio': get_metric_value("sharpe_ratio_usd"),
                             'Name': name,
@@ -877,6 +878,7 @@ class OptimizeV7Results:
                             'adg_over_ui': get_stat_value("adg_over_ui_usd"),
                             'gain_over_ui': get_stat_value("gain_over_ui_usd"),
                             'gain': get_stat_value("gain_usd"),
+                            'gain_per_actual_exposure': get_stat_value("gain_per_actual_exposure_usd", None),
                             'total_wallet_exposure_mean': get_stat_value("total_wallet_exposure_mean"),
                             'sharpe_ratio': get_stat_value("sharpe_ratio_usd"),
                             'Name': name,
@@ -920,6 +922,13 @@ class OptimizeV7Results:
                                 analysis, "gain_over_ui_max", "gain_over_ui_mean", "gain_over_ui"
                             )
                             gain = first_present(analysis, "gain_max", "gain_mean", "gain", default=0)
+                            gain_per_actual_exposure = first_present(
+                                analysis,
+                                "gain_per_actual_exposure_max",
+                                "gain_per_actual_exposure_mean",
+                                "gain_per_actual_exposure",
+                                default=None,
+                            )
                             total_wallet_exposure_mean = first_present(
                                 analysis,
                                 "total_wallet_exposure_mean_max",
@@ -941,6 +950,7 @@ class OptimizeV7Results:
                                 'adg_over_ui': adg_over_ui,
                                 'gain_over_ui': gain_over_ui,
                                 'gain': gain,
+                                'gain_per_actual_exposure': gain_per_actual_exposure,
                                 'total_wallet_exposure_mean': total_wallet_exposure_mean,
                                 'sharpe_ratio': sharpe_ratio,
                                 'Name': name,
@@ -964,6 +974,7 @@ class OptimizeV7Results:
                                     'adg_over_ui': analysis.get("adg_over_ui"),
                                     'gain_over_ui': analysis.get("gain_over_ui"),
                                     'gain': analysis["gain"],
+                                    'gain_per_actual_exposure': analysis.get("gain_per_actual_exposure"),
                                     'total_wallet_exposure_mean': analysis.get("total_wallet_exposure_mean"),
                                     'sharpe_ratio': analysis["sharpe_ratio"],
                                     'Name': name,
@@ -977,6 +988,10 @@ class OptimizeV7Results:
             "file": None,
             "view": st.column_config.CheckboxColumn(label="View"),
             "delete": st.column_config.CheckboxColumn(label="Delete"),
+            "gain_per_actual_exposure": st.column_config.NumberColumn(label="Gain/ActExp", format="%.4f"),
+            "drawdown_worst": st.column_config.NumberColumn(label="dd_worst", format="%.4f"),
+            "omega_ratio": st.column_config.NumberColumn(label="omega", format="%.4f"),
+            "sharpe_ratio": st.column_config.NumberColumn(label="sharpe", format="%.4f"),
             }
         #Display paretos
         height = 36+(len(d_paretos))*35

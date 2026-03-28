@@ -125,8 +125,13 @@ Current kept behavior:
    - `adg_over_ui`
    - `gain_over_ui`
    - `total_wallet_exposure_mean`
+   - `gain_per_actual_exposure`
 3. Old-format optimize results do not render missing metrics as misleading `0`; missing values are left blank when the payload does not contain them.
 4. EMA span slider max is raised to `20000`.
+5. Optimize result table uses shorter display labels for some high-frequency metrics:
+   - `drawdown_worst` -> `dd_worst`
+   - `omega_ratio` -> `omega`
+   - `sharpe_ratio` -> `sharpe`
 
 ### Reverse-proxy-friendly dashboard/log viewer routing
 
@@ -564,6 +569,7 @@ Required behavior:
 5. When `Scenario` is selected, `Stat` is disabled
 6. Pareto explorer efficiency presets prefer actual exposure metrics where intended
 7. Backtest/optimize UI should leave truly missing old-format values blank instead of forcing misleading `0`
+8. Optimize result table should expose `gain_per_actual_exposure` when present and keep the shortened display labels `dd_worst`, `omega`, and `sharpe`
 
 Implementation notes:
 
