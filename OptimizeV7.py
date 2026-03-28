@@ -992,6 +992,8 @@ class OptimizeV7Results:
             "drawdown_worst": st.column_config.NumberColumn(label="dd_worst", format="%.4f"),
             "omega_ratio": st.column_config.NumberColumn(label="omega", format="%.4f"),
             "sharpe_ratio": st.column_config.NumberColumn(label="sharpe", format="%.4f"),
+            "adg_over_ui": st.column_config.NumberColumn(label="ADG/UI", format="%.4f"),
+            "gain_over_ui": st.column_config.NumberColumn(label="Gain/UI", format="%.4f"),
             }
         #Display paretos
         height = 36+(len(d_paretos))*35

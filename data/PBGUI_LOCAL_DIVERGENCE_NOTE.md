@@ -132,6 +132,8 @@ Current kept behavior:
    - `drawdown_worst` -> `dd_worst`
    - `omega_ratio` -> `omega`
    - `sharpe_ratio` -> `sharpe`
+   - `adg_over_ui` -> `ADG/UI`
+   - `gain_over_ui` -> `Gain/UI`
 
 ### Reverse-proxy-friendly dashboard/log viewer routing
 
@@ -569,7 +571,7 @@ Required behavior:
 5. When `Scenario` is selected, `Stat` is disabled
 6. Pareto explorer efficiency presets prefer actual exposure metrics where intended
 7. Backtest/optimize UI should leave truly missing old-format values blank instead of forcing misleading `0`
-8. Optimize result table should expose `gain_per_actual_exposure` when present and keep the shortened display labels `dd_worst`, `omega`, and `sharpe`
+8. Optimize result table should expose `gain_per_actual_exposure` when present and keep the shortened display labels `dd_worst`, `omega`, `sharpe`, `ADG/UI`, and `Gain/UI`
 
 Implementation notes:
 
