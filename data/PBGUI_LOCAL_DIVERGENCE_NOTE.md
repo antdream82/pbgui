@@ -118,6 +118,7 @@ Current kept behavior:
    - `ulcer_index`
    - `adg_over_ui`
    - `gain_over_ui`
+   - `live.hedge_mode` toggle
 2. Optimize UI exposes:
    - `omega_ratio`
    - `peak_recovery_hours`
@@ -126,6 +127,7 @@ Current kept behavior:
    - `gain_over_ui`
    - `total_wallet_exposure_mean`
    - `gain_per_actual_exposure`
+   - `live.hedge_mode` toggle
 3. Old-format optimize results do not render missing metrics as misleading `0`; missing values are left blank when the payload does not contain them.
 4. EMA span slider max is raised to `20000`.
 5. Optimize result table uses shorter display labels for some high-frequency metrics:
@@ -572,6 +574,7 @@ Required behavior:
 6. Pareto explorer efficiency presets prefer actual exposure metrics where intended
 7. Backtest/optimize UI should leave truly missing old-format values blank instead of forcing misleading `0`
 8. Optimize result table should expose `gain_per_actual_exposure` when present and keep the shortened display labels `dd_worst`, `omega`, `sharpe`, `ADG/UI`, and `Gain/UI`
+9. Backtest and optimize editors should expose a `hedge_mode` toggle wired to `live.hedge_mode`
 
 Implementation notes:
 

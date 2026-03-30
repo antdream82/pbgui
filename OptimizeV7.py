@@ -1311,6 +1311,15 @@ class OptimizeV7Item(ConfigV7Editor):
             st.session_state.edit_opt_v7_logging_level = self.config.logging.level
         st.selectbox("logging level", Logging.LEVEL, format_func=lambda x: Logging.LEVEL.get(x), key="edit_opt_v7_logging_level", help=pbgui_help.logging_level)
 
+    @st.fragment
+    def fragment_hedge_mode(self):
+        if "edit_opt_v7_hedge_mode" in st.session_state:
+            if st.session_state.edit_opt_v7_hedge_mode != self.config.live.hedge_mode:
+                self.config.live.hedge_mode = st.session_state.edit_opt_v7_hedge_mode
+        else:
+            st.session_state.edit_opt_v7_hedge_mode = self.config.live.hedge_mode
+        st.checkbox("hedge_mode", key="edit_opt_v7_hedge_mode", help=pbgui_help.hedge_mode)
+
     # starting_balance
     @st.fragment
     def fragment_starting_balance(self):
@@ -6489,11 +6498,13 @@ class OptimizeV7Item(ConfigV7Editor):
             self.fragment_compress_results_file()
             self.fragment_write_all_results()
 
-        col1, col2, col3 = st.columns([2, 0.5, 1.5])
+        col1, col2, col3 = st.columns([2, 0.5, 1.0], vertical_alignment="bottom")
         with col1:
             self.fragment_ohlcv_source_dir()
         with col2:
             self.fragment_candle_interval_minutes()
+        with col3:
+            self.fragment_hedge_mode()
         
         # Coin Sources - full width for better layout consistency with scenarios
         self.fragment_coin_sources()

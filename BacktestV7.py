@@ -771,6 +771,16 @@ class BacktestV7Item(ConfigV7Editor):
             st.session_state.edit_bt_v7_filter_by_min_effective_cost = self.config.backtest.filter_by_min_effective_cost
         st.checkbox("filter_by_min_effective_cost", key="edit_bt_v7_filter_by_min_effective_cost", help=pbgui_help.bt_filter_by_min_effective_cost)
 
+    # hedge_mode
+    @st.fragment
+    def fragment_hedge_mode(self):
+        if "edit_bt_v7_hedge_mode" in st.session_state:
+            if st.session_state.edit_bt_v7_hedge_mode != self.config.live.hedge_mode:
+                self.config.live.hedge_mode = st.session_state.edit_bt_v7_hedge_mode
+        else:
+            st.session_state.edit_bt_v7_hedge_mode = self.config.live.hedge_mode
+        st.checkbox("hedge_mode", key="edit_bt_v7_hedge_mode", help=pbgui_help.hedge_mode)
+
     # compress_cache
     @st.fragment
     def fragment_compress_cache(self):
@@ -1342,7 +1352,7 @@ class BacktestV7Item(ConfigV7Editor):
         with col2:
             self.fragment_market_settings_sources()
         # Backtest Options
-        col1, col2, col3, col4 = st.columns([1,1,1,1])
+        col1, col2, col3, col4, col5 = st.columns([1,1,1,1,1])
         with col1:
             self.fragment_compress_cache()
         with col2:
@@ -1351,6 +1361,8 @@ class BacktestV7Item(ConfigV7Editor):
             self.fragment_maker_fee_override()
         with col4:
             self.fragment_volume_normalization()
+        with col5:
+            self.fragment_hedge_mode()
         # coin_sources (full width)
         self.fragment_coin_sources()
         # Suite (multi-scenario)
