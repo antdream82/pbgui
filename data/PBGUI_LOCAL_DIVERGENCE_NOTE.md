@@ -163,6 +163,8 @@ Current kept behavior:
 4. Dashboard list loading does not depend on Streamlit session-state objects inside FastAPI routes.
 5. Standalone dashboard main page auto-loads the first available dashboard when `current` is empty.
 6. Log viewer, VPS monitor, and dashboard nav bridge accept relative `/ws` bases and resolve them against the browser-visible parent origin.
+7. Standalone dashboard refresh button reloads the currently visible dashboard, not only the sidebar list.
+8. Standalone dashboard view mode includes a 3-minute fallback auto-refresh in case websocket-triggered updates do not arrive.
 
 ### Optimize-result suite/scenario compatibility
 
@@ -681,6 +683,8 @@ Required behavior:
 4. Dashboard list loading does not depend on Streamlit session state inside FastAPI routes
 5. Dashboard main page auto-loads the first available dashboard when no explicit dashboard is selected
 6. Log viewer, VPS monitor, and nav bridge accept relative websocket bases
+7. Dashboard refresh should reload the active dashboard view, not only refresh the sidebar dashboard list
+8. Dashboard view mode should have a fallback auto-refresh timer of 3 minutes for stale websocket/update cases
 
 Minimum verification:
 

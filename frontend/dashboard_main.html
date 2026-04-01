@@ -1030,6 +1030,8 @@ html, body {
   /* ── state ── */
   var currentDash = CURRENT || '';
   var editMode    = false;
+  var autoRefreshTimer = null;
+  var AUTO_REFRESH_MS = 180000;
 
   /* ── DOM refs ── */
   var editBanner     = document.getElementById('edit-mode-banner');
@@ -1098,6 +1100,7 @@ html, body {
     };
     renderToolbar();
     renderList();
+    configureAutoRefresh();
   }
 
   /* ── Load the editor iframe for a dashboard ── */
@@ -1119,6 +1122,32 @@ html, body {
     };
     renderToolbar();
     renderList();
+    configureAutoRefresh();
+  }
+
+  function reloadCurrentDashboard() {
+    if (editMode || !currentDash) return;
+    if (contentFrame && contentFrame.contentWindow) {
+      try {
+        contentLoading.style.display = 'flex';
+        contentFrame.classList.remove('visible');
+        contentFrame.contentWindow.location.reload();
+        return;
+      } catch (_) {}
+    }
+    loadView(currentDash);
+  }
+
+  function configureAutoRefresh() {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
+    if (editMode || !currentDash) return;
+    autoRefreshTimer = setInterval(function () {
+      if (document.hidden || editMode || !currentDash) return;
+      reloadCurrentDashboard();
+    }, AUTO_REFRESH_MS);
   }
 
   /* ── Refresh dashboard list from API ── */
@@ -1154,7 +1183,7 @@ html, body {
       });
     } else {
       sidebarToolbar.innerHTML =
-        '<button class="sb-btn" id="sb-refresh"   title="Refresh list">&#x21BB;</button>' +
+        '<button class="sb-btn" id="sb-refresh"   title="Refresh dashboard">&#x21BB;</button>' +
         '<button class="sb-btn" id="sb-new"       title="New dashboard">&#x2795;</button>' +
         (currentDash ?
           '<button class="sb-btn" id="sb-edit"      title="Edit current dashboard">&#x270E;</button>' +
@@ -1162,7 +1191,7 @@ html, body {
           : '') +
         '<button class="sb-btn" id="sb-templates" title="Templates">&#128203;</button>';
       document.getElementById('sb-refresh').addEventListener('click', function () {
-        refreshList();
+        refreshList(function () { reloadCurrentDashboard(); });
       });
       document.getElementById('sb-new').addEventListener('click', function () {
         openNewDashDialog();
@@ -1441,6 +1470,10 @@ html, body {
     } else if (DASHBOARDS.length > 0) {
       loadView(DASHBOARDS[0]);
     }
+  });
+
+  window.addEventListener('beforeunload', function () {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   });
 
   /* ════════════════════════════════════
