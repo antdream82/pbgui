@@ -807,15 +807,94 @@ class OptimizeV7Results:
                     if st.session_state.opt_v7_pareto_select_analysis != self.selected_analysis:
                         self.selected_analysis = st.session_state.opt_v7_pareto_select_analysis
                     st.selectbox('analyses', options=select_analysis, key="opt_v7_pareto_select_analysis", on_change=clear_paretos)
+
+        if "opt_v7_pareto_custom_column" not in st.session_state:
+            st.session_state.opt_v7_pareto_custom_column = ""
+        st.text_input(
+            "Custom column path",
+            key="opt_v7_pareto_custom_column",
+            on_change=clear_paretos,
+            help="Add one extra result column. Metric names (e.g. gain_per_actual_exposure_usd) and config paths (e.g. bot.long.total_wallet_exposure_limit or live.hedge_mode) are supported.",
+        )
         
         if not "d_paretos" in st.session_state:
             d = []
+            custom_column_path = str(st.session_state.get("opt_v7_pareto_custom_column", "") or "").strip()
 
             def first_present(mapping, *keys, default=None):
                 for key in keys:
                     if key in mapping:
                         return mapping[key]
                 return default
+
+            def deep_get(mapping, path, default=None):
+                current = mapping
+                for part in path.split("."):
+                    if isinstance(current, dict):
+                        if part not in current:
+                            return default
+                        current = current[part]
+                    elif isinstance(current, list) and part.isdigit():
+                        idx = int(part)
+                        if idx < 0 or idx >= len(current):
+                            return default
+                        current = current[idx]
+                    else:
+                        return default
+                return current
+
+            def with_currency_candidates(path):
+                candidates = [path]
+                if not path.endswith("_usd") and not path.endswith("_btc"):
+                    candidates.extend([f"{path}_usd", f"{path}_btc"])
+                return candidates
+
+            def resolve_custom_value(pareto):
+                if not custom_column_path:
+                    return None
+                path = custom_column_path
+                if is_new_format:
+                    if has_suite_metrics:
+                        suite_metrics = pareto.get("suite_metrics", {}).get("metrics", {})
+                        selected_scenario = st.session_state.opt_v7_pareto_scenario
+                        selected_stat = st.session_state.opt_v7_pareto_statistic
+                        for candidate in with_currency_candidates(path):
+                            metric_data = suite_metrics.get(candidate, {})
+                            if metric_data:
+                                if selected_scenario == "Aggregated":
+                                    return metric_data.get("stats", {}).get(selected_stat)
+                                return metric_data.get("scenarios", {}).get(selected_scenario)
+                    else:
+                        metrics_stats = pareto.get("metrics", {}).get("stats", {})
+                        selected_stat = st.session_state.opt_v7_pareto_statistic
+                        for candidate in with_currency_candidates(path):
+                            if candidate in metrics_stats:
+                                return metrics_stats.get(candidate, {}).get(selected_stat)
+                else:
+                    if select_analysis and st.session_state.opt_v7_pareto_select_analysis in select_analysis:
+                        if st.session_state.opt_v7_pareto_select_analysis == "analyses_combined":
+                            analysis = pareto.get("analyses_combined", {})
+                            for candidate in with_currency_candidates(path):
+                                val = first_present(
+                                    analysis,
+                                    f"{candidate}_max",
+                                    f"{candidate}_mean",
+                                    candidate,
+                                    default=None,
+                                )
+                                if val is not None:
+                                    return val
+                        else:
+                            analysis = pareto.get("analyses", {}).get(st.session_state.opt_v7_pareto_select_analysis, {})
+                            for candidate in with_currency_candidates(path):
+                                if candidate in analysis:
+                                    return analysis.get(candidate)
+
+                for candidate in [path, f"config.{path}", f"backtest.{path}"]:
+                    val = deep_get(pareto, candidate, default=None)
+                    if val is not None:
+                        return val
+                return None
 
             for id, pareto in enumerate(self.paretos):
                 name = pareto["index_filename"].split("/")[-1]
@@ -980,6 +1059,8 @@ class OptimizeV7Results:
                                     'Name': name,
                                     'file': pareto["index_filename"],
                                 })
+                if custom_column_path and d:
+                    d[-1][custom_column_path] = resolve_custom_value(pareto)
             st.session_state.d_paretos = d
         d_paretos = st.session_state.d_paretos
         column_config = {

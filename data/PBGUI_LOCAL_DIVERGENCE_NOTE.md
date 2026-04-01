@@ -136,6 +136,11 @@ Current kept behavior:
    - `sharpe_ratio` -> `sharpe`
    - `adg_over_ui` -> `ADG/UI`
    - `gain_over_ui` -> `Gain/UI`
+6. Optimize result table supports one custom column path input:
+   - metric names such as `gain_per_actual_exposure_usd`
+   - config paths such as `bot.long.total_wallet_exposure_limit`
+   - live config paths such as `live.hedge_mode`
+   - the entered path is also used as the column header
 
 ### Reverse-proxy-friendly dashboard/log viewer routing
 
@@ -574,7 +579,8 @@ Required behavior:
 6. Pareto explorer efficiency presets prefer actual exposure metrics where intended
 7. Backtest/optimize UI should leave truly missing old-format values blank instead of forcing misleading `0`
 8. Optimize result table should expose `gain_per_actual_exposure` when present and keep the shortened display labels `dd_worst`, `omega`, `sharpe`, `ADG/UI`, and `Gain/UI`
-9. Backtest and optimize editors should expose a `hedge_mode` toggle wired to `live.hedge_mode`
+9. Optimize result table should support one custom column path input for either metrics or config paths, using the entered path as the column header
+10. Backtest and optimize editors should expose a `hedge_mode` toggle wired to `live.hedge_mode`
 
 Implementation notes:
 
