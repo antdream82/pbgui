@@ -141,6 +141,11 @@ Current kept behavior:
    - config paths such as `bot.long.total_wallet_exposure_limit`
    - live config paths such as `live.hedge_mode`
    - the entered path is also used as the column header
+7. Top-level segmented navigation controls use non-empty accessibility labels with collapsed visibility:
+   - Backtest -> `Backtest view`
+   - Optimize -> `Optimize view`
+   - Pareto Explorer -> `Pareto view`
+   - this preserves the existing UI while avoiding Streamlit empty-label warnings
 
 ### Reverse-proxy-friendly dashboard/log viewer routing
 
