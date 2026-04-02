@@ -112,7 +112,7 @@ _PARETO_TABS = ["Command Center", "Pareto Playground", "Deep Intelligence"]
 if "pareto_main_view" not in st.session_state:
     st.session_state.pareto_main_view = "Command Center"
 _active_stage = st.segmented_control(
-    "", options=_PARETO_TABS, default="Command Center", key="pareto_main_view"
+    "Pareto view", options=_PARETO_TABS, default="Command Center", key="pareto_main_view", label_visibility="collapsed"
 ) or "Command Center"
 
 # Run the Pareto Explorer

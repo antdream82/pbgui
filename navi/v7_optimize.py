@@ -252,7 +252,7 @@ elif "opt_v7_main_view" not in st.session_state:
         st.session_state.opt_v7_main_view = "Config"
 
 _active = st.segmented_control(
-    "", options=_MAIN_TABS, default="Config", key="opt_v7_main_view"
+    "Optimize view", options=_MAIN_TABS, default="Config", key="opt_v7_main_view", label_visibility="collapsed"
 )
 
 if _active == "Queue":
