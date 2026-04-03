@@ -1631,7 +1631,15 @@ write_all_results = """
 
 starting_config = """
     ```
-    Start the optimizer with config.
+    Enable starting configs for the optimizer.
+    If starting_config_path is empty, the current optimize config JSON is used as the seed source.
+    ```"""
+
+starting_config_path = """
+    ```
+    Optional file or directory passed to optimize.py via -t.
+    Use this when you want to seed the optimizer from another config file or from a folder of configs.
+    Leave empty to keep the legacy behavior and use the current optimize config itself.
     ```"""
 
 vps_swap = """

@@ -146,6 +146,14 @@ Current kept behavior:
    - Optimize -> `Optimize view`
    - Pareto Explorer -> `Pareto view`
    - this preserves the existing UI while avoiding Streamlit empty-label warnings
+8. Optimize queue stop prefers graceful interruption on Linux:
+   - sends `SIGINT` to the optimize process group first
+   - allows PB7 `optimize.py` to run its `finally` cleanup and unlink SharedMemory segments under `/dev/shm`
+   - escalates to stronger termination only if the process does not exit in time
+9. Optimize UI supports an optional `starting_config_path`:
+   - when `starting_config` is enabled and the path is empty, the current optimize config remains the seed source
+   - when the path is set, PBGUI passes that file or directory to PB7 `optimize.py -t`
+   - this makes it possible to seed an optimize run from an external config folder without editing the run config itself
 
 ### Reverse-proxy-friendly dashboard/log viewer routing
 

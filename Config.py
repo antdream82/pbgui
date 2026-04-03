@@ -6363,6 +6363,7 @@ class PBGui:
         self._enabled_on = "disabled"
         self._only_cpt = False
         self._starting_config = False
+        self._starting_config_path = ""
         self._market_cap = 0
         self._vol_mcap = 10.0
         self._tags = []
@@ -6374,6 +6375,7 @@ class PBGui:
             "enabled_on": self._enabled_on,
             "only_cpt": self._only_cpt,
             "starting_config": self._starting_config,
+            "starting_config_path": self._starting_config_path,
             "market_cap": self._market_cap,
             "vol_mcap": self._vol_mcap,
             "tags": self._tags,
@@ -6397,6 +6399,8 @@ class PBGui:
             self.only_cpt = new_pbgui["only_cpt"]
         if "starting_config" in new_pbgui:
             self.starting_config = new_pbgui["starting_config"]
+        if "starting_config_path" in new_pbgui:
+            self.starting_config_path = new_pbgui["starting_config_path"]
         if "market_cap" in new_pbgui:
             self.market_cap = new_pbgui["market_cap"]
         if "vol_mcap" in new_pbgui:
@@ -6418,6 +6422,8 @@ class PBGui:
     def only_cpt(self): return self._only_cpt
     @property
     def starting_config(self): return self._starting_config
+    @property
+    def starting_config_path(self): return self._starting_config_path
     @property
     def market_cap(self): return self._market_cap
     @property
@@ -6447,6 +6453,10 @@ class PBGui:
     def starting_config(self, new_starting_config):
         self._starting_config = new_starting_config
         self._pbgui["starting_config"] = self._starting_config
+    @starting_config_path.setter
+    def starting_config_path(self, new_starting_config_path):
+        self._starting_config_path = "" if new_starting_config_path is None else str(new_starting_config_path).strip()
+        self._pbgui["starting_config_path"] = self._starting_config_path
     @market_cap.setter
     def market_cap(self, new_market_cap):
         self._market_cap = new_market_cap

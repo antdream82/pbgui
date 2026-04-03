@@ -51,6 +51,7 @@ class OptimizeV7QueueItem:
         self.json = None
         self.exchange = None
         self.starting_config = False
+        self.starting_config_path = ""
         self.log = None
         self.log_show = False
         self.pid = None
@@ -214,7 +215,23 @@ class OptimizeV7QueueItem:
             new_os_path = os.path.dirname(pb7venv()) + os.pathsep + old_os_path
             os.environ['PATH'] = new_os_path
             if self.starting_config:
-                cmd = [pb7venv(), '-u', PurePath(f'{pb7dir()}/src/optimize.py'), '-t', str(PurePath(f'{self.json}')), str(PurePath(f'{self.json}'))]
+                starting_target = self.starting_config_path.strip() if self.starting_config_path else ""
+                if starting_target:
+                    starting_target = str(Path(starting_target).expanduser())
+                    if not Path(starting_target).exists():
+                        msg = f"Starting config path does not exist: {starting_target}"
+                        _emit_error(msg)
+                        try:
+                            self.log.parent.mkdir(parents=True, exist_ok=True)
+                            with open(self.log, "w", encoding="utf-8") as log_f:
+                                log_f.write(msg + "\n")
+                        except Exception:
+                            pass
+                        os.environ['PATH'] = old_os_path
+                        return
+                else:
+                    starting_target = str(PurePath(f'{self.json}'))
+                cmd = [pb7venv(), '-u', PurePath(f'{pb7dir()}/src/optimize.py'), '-t', starting_target, str(PurePath(f'{self.json}'))]
             else:
                 cmd = [pb7venv(), '-u', PurePath(f'{pb7dir()}/src/optimize.py'), str(PurePath(f'{self.json}'))]
             self.log.parent.mkdir(parents=True, exist_ok=True)
@@ -322,6 +339,7 @@ class OptimizeV7Queue:
                 config = OptimizeV7Item(qitem.json)
                 qitem.exchange = q_config["exchange"]
                 qitem.starting_config = config.config.pbgui.starting_config
+                qitem.starting_config_path = getattr(config.config.pbgui, "starting_config_path", "")
                 qitem.log = Path(f'{PBGDIR}/data/logs/optimizes/{qitem.filename}.log')
                 qitem.pidfile = Path(f'{PBGDIR}/data/opt_v7_queue/{qitem.filename}.pid')
                 self.add(qitem)
@@ -1440,6 +1458,23 @@ class OptimizeV7Item(ConfigV7Editor):
         else:
             st.session_state.edit_opt_v7_starting_config = self.config.pbgui.starting_config
         st.checkbox("starting_config", key="edit_opt_v7_starting_config", help=pbgui_help.starting_config)
+
+    @st.fragment
+    def fragment_starting_config_path(self):
+        key = "edit_opt_v7_starting_config_path"
+        if key in st.session_state:
+            new_value = st.session_state[key].strip()
+            if new_value != self.config.pbgui.starting_config_path:
+                self.config.pbgui.starting_config_path = new_value
+        else:
+            st.session_state[key] = self.config.pbgui.starting_config_path
+        st.text_input(
+            "starting_config_path",
+            key=key,
+            help=pbgui_help.starting_config_path,
+            disabled=not self.config.pbgui.starting_config,
+            placeholder="optional file or directory path",
+        )
 
     # ohlcv_source_dir
     @st.fragment
@@ -6578,6 +6613,10 @@ class OptimizeV7Item(ConfigV7Editor):
         with col6:
             self.fragment_compress_results_file()
             self.fragment_write_all_results()
+
+        col1, col2 = st.columns([2, 1], vertical_alignment="bottom")
+        with col1:
+            self.fragment_starting_config_path()
 
         col1, col2, col3 = st.columns([2, 0.5, 1.0], vertical_alignment="bottom")
         with col1:
