@@ -6,6 +6,7 @@ import sys
 import platform
 import subprocess
 import glob
+import signal
 import configparser
 import time
 import multiprocessing
@@ -157,8 +158,44 @@ class OptimizeV7QueueItem:
 
     def stop(self):
         if self.is_running():
-            parent = psutil.Process(self.pid)
-            children = parent.children(recursive=True)
+            try:
+                parent = psutil.Process(self.pid)
+            except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                return
+
+            if platform.system() != "Windows":
+                # Let optimize.py unwind through its KeyboardInterrupt/finally path so it can
+                # close the pool and unlink SharedMemory segments under /dev/shm.
+                try:
+                    os.killpg(parent.pid, signal.SIGINT)
+                except ProcessLookupError:
+                    return
+                except Exception:
+                    pass
+
+                deadline = time.time() + 20.0
+                while time.time() < deadline:
+                    if not self.is_running():
+                        return
+                    time.sleep(0.25)
+
+                try:
+                    os.killpg(parent.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    return
+                except Exception:
+                    pass
+
+                deadline = time.time() + 5.0
+                while time.time() < deadline:
+                    if not self.is_running():
+                        return
+                    time.sleep(0.25)
+
+            try:
+                children = parent.children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                return
             children.append(parent)
             for p in children:
                 try:
