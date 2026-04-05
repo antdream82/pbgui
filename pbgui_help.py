@@ -1097,6 +1097,14 @@ mutation_indpb = """
     or supply an explicit probability between 0 and 1.
     ```"""
 
+round_to_n_significant_digits = """
+    ```
+    Global precision for continuous optimize bounds that do not define an explicit step.
+    Lower values make the search coarser and reduce meaningless micro-variation.
+    Higher values make the search finer.
+    Explicit [low, high, step] bounds always override this setting.
+    ```"""
+
 scoring = """
     ```
     The optimizer uses two objectives and finds the Pareto front.

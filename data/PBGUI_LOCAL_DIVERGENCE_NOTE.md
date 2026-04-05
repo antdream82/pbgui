@@ -154,6 +154,9 @@ Current kept behavior:
    - when `starting_config` is enabled and the path is empty, the current optimize config remains the seed source
    - when the path is set, PBGUI passes that file or directory to PB7 `optimize.py -t`
    - this makes it possible to seed an optimize run from an external config folder without editing the run config itself
+10. Optimize UI exposes `sig_digits` for `optimize.round_to_n_significant_digits`:
+   - this controls the global precision used for continuous bounds without explicit steps
+   - explicit `[low, high, step]` bounds still take precedence over the global setting
 
 ### Reverse-proxy-friendly dashboard/log viewer routing
 

@@ -1486,6 +1486,24 @@ class OptimizeV7Item(ConfigV7Editor):
             st.session_state.edit_opt_v7_n_cpus = self.config.optimize.n_cpus
         st.number_input("n_cpus", min_value=1, max_value=multiprocessing.cpu_count(), step=1, key="edit_opt_v7_n_cpus", help=pbgui_help.n_cpus)
 
+    # round_to_n_significant_digits
+    @st.fragment
+    def fragment_round_to_n_significant_digits(self):
+        key = "edit_opt_v7_round_to_n_significant_digits"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.optimize.round_to_n_significant_digits:
+                self.config.optimize.round_to_n_significant_digits = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.optimize.round_to_n_significant_digits
+        st.number_input(
+            "sig_digits",
+            min_value=1,
+            max_value=10,
+            step=1,
+            key=key,
+            help=pbgui_help.round_to_n_significant_digits,
+        )
+
     # starting_config
     @st.fragment
     def fragment_starting_config(self):
@@ -6636,7 +6654,7 @@ class OptimizeV7Item(ConfigV7Editor):
             self.fragment_btc_collateral_cap()
         with col6:
             self.fragment_btc_collateral_ltv_cap()
-        col1, col2, col3, col4, col5, col6 = st.columns([1,1,0.5,0.5,0.5,0.5], vertical_alignment="bottom")
+        col1, col2, col3, col4, col5, col6, col7 = st.columns([1,1,0.5,0.5,0.5,0.5,0.5], vertical_alignment="bottom")
         with col1:
             self.fragment_starting_balance()
         with col2:
@@ -6644,10 +6662,12 @@ class OptimizeV7Item(ConfigV7Editor):
         with col3:
             self.fragment_n_cpus()
         with col4:
-            self.fragment_logging()
+            self.fragment_round_to_n_significant_digits()
         with col5:
-            self.fragment_starting_config()
+            self.fragment_logging()
         with col6:
+            self.fragment_starting_config()
+        with col7:
             self.fragment_compress_results_file()
             self.fragment_write_all_results()
 
