@@ -774,3 +774,209 @@ If reapplying after a full upstream pull, keep the work split into separate comm
 6. `docs: update local divergence note`
 
 This makes the next future reapply much easier because each divergence family stays isolated.
+
+## Rebase Preparation Design
+
+This section is for the medium-term plan where the local fork stays on its current base for now,
+but the code and documentation should be shaped so a future `rebase to upstream` is less painful.
+
+### Current strategy
+
+Current preferred strategy:
+
+1. Keep the current local base
+2. Selectively absorb high-value upstream improvements
+3. Keep local-only behavior grouped into small, named divergence packages
+4. Delay full upstream rebase until upstream gains are large enough to justify the conflict cost
+
+Reason:
+
+- current local behavior already contains deployment-specific and workflow-specific changes that are not upstream
+- upstream PB7 optimize/scoring/limits internals are still moving
+- upstream PBGUI also has large in-flight changes such as FastAPI migration work that would create broad conflict surfaces if adopted halfway
+
+### Local divergence packages
+
+Treat the local fork as a set of explicit patch packages instead of a pile of file diffs.
+
+#### Package A: `pb7-optimize-core`
+
+Purpose:
+
+- local PB7 optimize/backtest behavior that materially changes optimization outcomes
+
+Includes:
+
+- actual exposure metrics
+- actual-exposure-normalized metrics
+- short exposure computed from `abs(twe_short)`
+- scenario-aware optimize limits
+
+Primary files:
+
+- [backtest.py](/app/pb7/src/backtest.py)
+- [config_utils.py](/app/pb7/src/config_utils.py)
+- [limit_utils.py](/app/pb7/src/limit_utils.py)
+- [optimize.py](/app/pb7/src/optimize.py)
+- [pareto_store.py](/app/pb7/src/pareto_store.py)
+- [iterative_backtester.py](/app/pb7/src/tools/iterative_backtester.py)
+
+#### Package B: `pbgui-optimize-ui`
+
+Purpose:
+
+- local PBGUI optimize controls and optimize-result usability improvements
+
+Includes:
+
+- actual exposure metrics in PBGUI registries
+- `Scenario` field in optimize limits UI
+- `gain_per_actual_exposure` in optimize results
+- shortened optimize result metric labels
+- custom optimize result column path
+- `starting_config_path`
+- `sig_digits` exposure
+- `hedge_mode` toggle exposure
+
+Primary files:
+
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [Config.py](/app/pbgui/Config.py)
+- [pbgui_help.py](/app/pbgui/pbgui_help.py)
+- [ParetoExplorer.py](/app/pbgui/ParetoExplorer.py)
+- [BacktestV7.py](/app/pbgui/BacktestV7.py)
+
+#### Package C: `pbgui-suite-compat`
+
+Purpose:
+
+- keep optimize-result payload compatibility with suite backtest editing
+
+Includes:
+
+- `BT selected` restoring top-level suite scenario payloads into `backtest.suite`
+
+Primary files:
+
+- [Config.py](/app/pbgui/Config.py)
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [BacktestV7.py](/app/pbgui/BacktestV7.py)
+
+#### Package D: `pbgui-dashboard-proxy`
+
+Purpose:
+
+- preserve deployment-safe dashboard and log behavior behind reverse proxies
+
+Includes:
+
+- same-origin `/api`, `/app`, `/ws` routing
+- dashboard refresh behavior
+- 3-minute fallback auto-refresh
+
+Primary files:
+
+- [pbgui_func.py](/app/pbgui/pbgui_func.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+- [frontend/dashboard_main.html](/app/pbgui/frontend/dashboard_main.html)
+- [navi/info_dashboards.py](/app/pbgui/navi/info_dashboards.py)
+- [components/log_viewer/index.html](/app/pbgui/components/log_viewer/index.html)
+- [components/vps_monitor/index.html](/app/pbgui/components/vps_monitor/index.html)
+- [components/nav_bridge/index.html](/app/pbgui/components/nav_bridge/index.html)
+
+#### Package E: `pbgui-runtime-ops`
+
+Purpose:
+
+- operational fixes that reduce friction during day-to-day optimize/backtest usage
+
+Includes:
+
+- optimize queue graceful stop for `/dev/shm` cleanup
+- segmented-control accessibility labels
+
+Primary files:
+
+- [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
+- [navi/v7_backtest.py](/app/pbgui/navi/v7_backtest.py)
+- [navi/v7_optimize.py](/app/pbgui/navi/v7_optimize.py)
+- [navi/v7_pareto_explorer.py](/app/pbgui/navi/v7_pareto_explorer.py)
+
+#### Package F: `hyperliquid-local`
+
+Purpose:
+
+- preserve local Hyperliquid-specific balance, position, symbol, and dashboard correctness
+
+Primary files:
+
+- [Exchange.py](/app/pbgui/Exchange.py)
+- [PBData.py](/app/pbgui/PBData.py)
+- [Database.py](/app/pbgui/Database.py)
+- [api/dashboard.py](/app/pbgui/api/dashboard.py)
+
+### Upstream improvements worth selective backport before a full rebase
+
+#### PB7
+
+Highest-value current upstream candidates:
+
+1. `647a7258` `Fix deap objective direction handling`
+2. `0119092e` `Make optimizer scoring goals explicit`
+3. `bf821184` / `b1710a66` no-fill backtest crash and resample handling fixes
+
+Secondary candidates:
+
+4. `6c53cc62` `Extend optimize limit operator support`
+5. `86bda6d7` `Align optimize limit CLI with keep semantics`
+6. `27c756b6` `Fix optimize limit CLI merge semantics`
+7. `313cac34` / `391c326c` Pareto explorer tool improvements
+
+#### PBGUI
+
+Highest-value current upstream candidates:
+
+1. `053fdd5` `Fix PBData status detection, optimize HL budget weights/backoff/slots`
+2. `01b88f2` `Poller metrics dashboard, HL rate-limit budget, log/polling fixes`
+
+Large but currently deferred:
+
+- `7bdbdf0` and follow-up `feature/runv7-fastapi` work
+
+Deferred reason:
+
+- these are broad structural migrations, not narrowly scoped outcome improvements
+
+### Decision rule for when to switch from local-base to full upstream rebase
+
+Stay on local base while all of the following remain true:
+
+- needed upstream improvements can be backported in isolated commits
+- local optimize/dashboard/proxy/Hyperliquid behavior still differs materially from upstream
+- the cost of replaying local packages onto upstream exceeds the near-term value gained
+
+Switch to a full upstream rebase when one or more become true:
+
+- upstream optimize/scoring/pareto features become essential for daily use
+- upstream PBGUI structural changes become too large to backport safely in pieces
+- the local divergence packages have been kept clean enough that replay cost is predictable
+
+### Rebase readiness checklist
+
+The local fork is considered "rebase-ready enough" when all of the following are true:
+
+1. Every local-only behavior maps cleanly to one package above
+2. Each package can be described in a short commit message and a short verification list
+3. No package depends on hidden state or undocumented manual edits
+4. The current divergence note still matches reality
+5. High-conflict upstream files have their local intent described here, not only in code
+
+### Recommended near-term workflow
+
+Until the full upstream rebase happens:
+
+1. Keep local changes grouped by package when possible
+2. When backporting upstream fixes, note in this document which package they affect
+3. Avoid mixing upstream absorption and local feature work in the same commit
+4. Prefer "one package, one commit" for future divergence changes
+5. Revisit the rebase decision only after enough upstream optimize/PBGUI gains accumulate
