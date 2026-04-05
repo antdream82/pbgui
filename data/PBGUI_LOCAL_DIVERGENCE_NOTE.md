@@ -923,7 +923,23 @@ Highest-value current upstream candidates:
 
 1. `647a7258` `Fix deap objective direction handling`
 2. `0119092e` `Make optimizer scoring goals explicit`
-3. `bf821184` / `b1710a66` no-fill backtest crash and resample handling fixes
+3. `bf821184` / `b1710a66` no-fill backtest crash and resample handling fixes`
+
+Applied locally on 2026-04-05:
+
+- package: `pb7-optimize-core`
+- files:
+  - [backtest.py](/app/pb7/src/backtest.py)
+  - [test_backtest_analysis.py](/app/pb7/tests/test_backtest_analysis.py)
+- local behavior:
+  - zero-fill `process_forager_fills()` keeps empty wallet/balance series on a `DatetimeIndex`
+  - balance/equity resampling checks the index type before calling `resample()`
+  - this prevents no-fill optimize/backtest runs from failing on pandas index-type mismatches
+- verification:
+  - [test_backtest_analysis.py](/app/pb7/tests/test_backtest_analysis.py)
+  - [test_optimizer_limits_integration.py](/app/pb7/tests/test_optimizer_limits_integration.py)
+  - [test_pareto_limits.py](/app/pb7/tests/test_pareto_limits.py)
+  - local `/venv_pb7` now has `pytest` installed for PB7 regression checks
 
 Secondary candidates:
 
