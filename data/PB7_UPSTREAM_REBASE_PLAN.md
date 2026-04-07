@@ -71,6 +71,54 @@ git -C /app/pb7 fetch upstream
 git -C /app/pb7 checkout -b rebase/pb7-upstream-20260407 upstream/master
 ```
 
+## Progress log
+
+### 2026-04-07
+
+Completed so far on `/app/pb7` branch `rebase/pb7-upstream-20260407`:
+
+1. Rebased work started from `upstream/master`
+2. Restored first Hyperliquid runtime package pieces in:
+   - [utils.py](/app/pb7/src/utils.py)
+   - [hyperliquid.py](/app/pb7/src/exchanges/hyperliquid.py)
+3. Preserved upstream scoring semantics while restoring local optimize extensions in:
+   - [backtest.py](/app/pb7/src/backtest.py)
+   - [config/metrics.py](/app/pb7/src/config/metrics.py)
+   - [config/scoring.py](/app/pb7/src/config/scoring.py)
+   - [config/limits.py](/app/pb7/src/config/limits.py)
+   - [limit_utils.py](/app/pb7/src/limit_utils.py)
+   - [optimize.py](/app/pb7/src/optimize.py)
+   - [pareto_store.py](/app/pb7/src/pareto_store.py)
+4. Updated regression tests for actual exposure metrics and scenario-aware limits in:
+   - [test_backtest_analysis.py](/app/pb7/tests/test_backtest_analysis.py)
+   - [test_optimizer_limits_integration.py](/app/pb7/tests/test_optimizer_limits_integration.py)
+   - [test_pareto_limits.py](/app/pb7/tests/test_pareto_limits.py)
+   - [test_config_utils_helpers.py](/app/pb7/tests/test_config_utils_helpers.py)
+5. Standardized the rebase venv around latest `ccxt`:
+   - [requirements-live.txt](/app/pb7/requirements-live.txt) now pins `ccxt==4.5.47`
+   - `/venv_pb7` also uses `ccxt 4.5.47`
+6. Rebuilt the Rust extension against current sources before running tests
+
+Validation completed:
+
+1. `python -m py_compile` for the touched source and test files
+2. `144 passed` across:
+   - [test_utils_maps.py](/app/pb7/tests/test_utils_maps.py)
+   - [test_stock_perps.py](/app/pb7/tests/test_stock_perps.py)
+   - [test_hyperliquid_balance_cache.py](/app/pb7/tests/test_hyperliquid_balance_cache.py)
+   - [test_passivbot_balance_split.py](/app/pb7/tests/test_passivbot_balance_split.py)
+   - [test_order_orchestration.py](/app/pb7/tests/test_order_orchestration.py)
+   - [test_backtest_analysis.py](/app/pb7/tests/test_backtest_analysis.py)
+   - [test_optimizer_limits_integration.py](/app/pb7/tests/test_optimizer_limits_integration.py)
+   - [test_pareto_limits.py](/app/pb7/tests/test_pareto_limits.py)
+   - [test_config_utils_helpers.py](/app/pb7/tests/test_config_utils_helpers.py)
+
+Current meaning of this progress:
+
+1. Package 1 is partially restored and verified
+2. Package 2 and Package 3 are now functionally in place for the tested paths
+3. The next remaining work is broader passivbot/runtime review plus any additional local-only PB7 behavior not yet replayed from the old branch
+
 ## Required behavior inventory
 
 Nothing in the current local PB7 patch set should be considered optional for production.
