@@ -389,3 +389,47 @@ This plan is complete only when:
 2. All required local PB7 behaviors are restored
 3. Regression tests pass
 4. PBGUI can begin its own reapply work against the rebased PB7
+
+## Progress log
+
+### 2026-04-07
+
+Completed on branch `rebase/pb7-upstream-20260407`:
+
+1. Restored Hyperliquid symbol mapping and dex-scoped state fetch behavior on top of `upstream/master`
+2. Restored local optimize extensions on upstream scoring base:
+   `wallet_exposure_*_{long,short}`, `*_per_actual_exposure*`, scenario-aware optimize limits
+3. Restored Hyperliquid cancel-gone handling:
+   local open-order removal on cancel-gone success, recent cancel-gone suppression, tombstone persistence
+4. Restored ulcer-index family:
+   `ulcer_index`, `adg_over_ui`, `gain_over_ui`
+
+Validation completed:
+
+1. Real backtest smoke on cached market data produced actual exposure metrics and actual-exposure-normalized metrics
+2. Real suite/evaluator smoke confirmed scenario-specific limit penalties
+3. End-to-end tiny optimize smoke produced suite payloads, actual exposure metrics, and scenario-aware constraint output
+4. Relevant regression suite passed:
+
+```bash
+VIRTUAL_ENV=/venv_pb7 PATH=/venv_pb7/bin:$PATH /venv_pb7/bin/pytest \
+  tests/test_utils_maps.py \
+  tests/test_stock_perps.py \
+  tests/test_hyperliquid_balance_cache.py \
+  tests/test_passivbot_balance_split.py \
+  tests/test_order_orchestration.py \
+  tests/test_backtest_analysis.py \
+  tests/test_optimizer_limits_integration.py \
+  tests/test_pareto_limits.py \
+  tests/test_config_utils_helpers.py \
+  tests/test_config_scoring.py
+```
+
+Result:
+
+- `148 passed`
+
+Current note:
+
+- `git cherry` against old local `origin/master` still lists historical commits because the rebased work is not patch-equivalent.
+- For parity review, trust behavior checks and regression results over raw cherry output.
