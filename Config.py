@@ -262,6 +262,30 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         weighted_variant="loss_profit_ratio_w",
         description="Loss-to-profit efficiency ratio (plus weighted variant).",
     ),
+    "paper_loss_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="paper_loss_ratio_w",
+        description="ADG divided by the worst absolute negative equity-vs-balance gap (plus weighted variant).",
+    ),
+    "paper_loss_mean_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="paper_loss_mean_ratio_w",
+        description="ADG divided by the mean absolute negative equity-vs-balance gap (plus weighted variant).",
+    ),
+    "exposure_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="exposure_ratio_w",
+        description="ADG divided by the maximum absolute recorded wallet exposure (plus weighted variant).",
+    ),
+    "exposure_mean_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="exposure_mean_ratio_w",
+        description="ADG divided by the mean absolute recorded wallet exposure (plus weighted variant).",
+    ),
     "sharpe_ratio_pnl": MetricDef(
         group="Ratios & Efficiency",
         has_currency=False,
@@ -307,6 +331,27 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=False,
         weighted_variant="volume_pct_per_day_avg_w",
         description="Average daily traded volume as % of balance (plus weighted variant).",
+    ),
+    "win_rate": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        weighted_variant="win_rate_w",
+        description="Fraction of completed trades with positive net realized PnL (plus weighted variant).",
+    ),
+    "trade_loss_max": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Worst completed-trade loss as a fraction of account balance at trade open.",
+    ),
+    "trade_loss_mean": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Mean losing-trade loss fraction relative to account balance at trade open.",
+    ),
+    "trade_loss_median": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Median losing-trade loss fraction relative to account balance at trade open.",
     ),
     "peak_recovery_hours_equity": MetricDef(
         group="Position & Execution Metrics",
@@ -1598,6 +1643,8 @@ class Backtest:
         self._btc_collateral_ltv_cap = None
         self._max_warmup_minutes = 0.0
         self._candle_interval_minutes = 1
+        self._liquidation_threshold = 0.05
+        self._market_order_slippage_pct = 0.0005
         self._market_settings_sources = {}
         self._volume_normalization = True
         self._coin_sources = {}
@@ -1619,6 +1666,8 @@ class Backtest:
             "btc_collateral_ltv_cap": self._btc_collateral_ltv_cap,
             "max_warmup_minutes": self._max_warmup_minutes,
             "candle_interval_minutes": self._candle_interval_minutes,
+            "liquidation_threshold": self._liquidation_threshold,
+            "market_order_slippage_pct": self._market_order_slippage_pct,
             "market_settings_sources": self._market_settings_sources,
             "volume_normalization": self._volume_normalization,
             "coin_sources": self._coin_sources,
@@ -1695,6 +1744,10 @@ class Backtest:
             self.max_warmup_minutes = new_backtest["max_warmup_minutes"]
         if "candle_interval_minutes" in new_backtest:
             self.candle_interval_minutes = new_backtest["candle_interval_minutes"]
+        if "liquidation_threshold" in new_backtest:
+            self.liquidation_threshold = new_backtest["liquidation_threshold"]
+        if "market_order_slippage_pct" in new_backtest:
+            self.market_order_slippage_pct = new_backtest["market_order_slippage_pct"]
         if "market_settings_sources" in new_backtest:
             self.market_settings_sources = new_backtest["market_settings_sources"]
         if "volume_normalization" in new_backtest:
@@ -1739,6 +1792,10 @@ class Backtest:
     def max_warmup_minutes(self): return self._max_warmup_minutes
     @property
     def candle_interval_minutes(self): return self._candle_interval_minutes
+    @property
+    def liquidation_threshold(self): return self._liquidation_threshold
+    @property
+    def market_order_slippage_pct(self): return self._market_order_slippage_pct
     @property
     def market_settings_sources(self): return self._market_settings_sources
     @property
@@ -1815,6 +1872,16 @@ class Backtest:
             value = 1
         self._candle_interval_minutes = max(1, value)
         self._backtest["candle_interval_minutes"] = self._candle_interval_minutes
+    @liquidation_threshold.setter
+    def liquidation_threshold(self, new_liquidation_threshold):
+        value = 0.05 if new_liquidation_threshold in (None, "") else float(new_liquidation_threshold)
+        self._liquidation_threshold = min(max(0.0, value), 0.999999)
+        self._backtest["liquidation_threshold"] = self._liquidation_threshold
+    @market_order_slippage_pct.setter
+    def market_order_slippage_pct(self, new_market_order_slippage_pct):
+        value = 0.0005 if new_market_order_slippage_pct in (None, "") else float(new_market_order_slippage_pct)
+        self._market_order_slippage_pct = max(0.0, value)
+        self._backtest["market_order_slippage_pct"] = self._market_order_slippage_pct
     @market_settings_sources.setter
     def market_settings_sources(self, new_market_settings_sources):
         self._market_settings_sources = new_market_settings_sources if new_market_settings_sources else {}
@@ -1894,65 +1961,75 @@ class Bot:
     @st.fragment
     def edit(self):
         # Init session_state for keys
-        if "edit_configv7_long_twe" in st.session_state:
-            if st.session_state.edit_configv7_long_twe != self.long.total_wallet_exposure_limit:
-                self.long.total_wallet_exposure_limit = round(st.session_state.edit_configv7_long_twe,2)
-                st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
-            if "edit_configv7_long" in st.session_state:
-                try:
-                    long = json.loads(st.session_state.edit_configv7_long)
-                    if st.session_state.edit_configv7_long_twe != float(long["total_wallet_exposure_limit"]):
-                        st.session_state.edit_configv7_long_twe = float(long["total_wallet_exposure_limit"])
-                except:
-                    st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
-                    error_popup("Invalid JSON long | RESET")
-        else:
-            st.session_state.edit_configv7_long_twe = float(self.long.total_wallet_exposure_limit)
+        if "edit_configv7_long_hsl_enabled" not in st.session_state:
+            st.session_state.edit_configv7_long_hsl_enabled = self.long.hsl_enabled
+        if "edit_configv7_long_hsl_no_restart_drawdown_threshold" not in st.session_state:
+            st.session_state.edit_configv7_long_hsl_no_restart_drawdown_threshold = float(self.long.hsl_no_restart_drawdown_threshold)
+        if "edit_configv7_long_hsl_orange_tier_mode" not in st.session_state:
+            st.session_state.edit_configv7_long_hsl_orange_tier_mode = self.long.hsl_orange_tier_mode
+        if "edit_configv7_long_hsl_panic_close_order_type" not in st.session_state:
+            st.session_state.edit_configv7_long_hsl_panic_close_order_type = self.long.hsl_panic_close_order_type
+        if "edit_configv7_long_hsl_tier_yellow" not in st.session_state:
+            st.session_state.edit_configv7_long_hsl_tier_yellow = float(self.long.hsl_tier_ratios["yellow"])
+        if "edit_configv7_long_hsl_tier_orange" not in st.session_state:
+            st.session_state.edit_configv7_long_hsl_tier_orange = float(self.long.hsl_tier_ratios["orange"])
 
-        if "edit_configv7_long_positions" in st.session_state:
-            if st.session_state.edit_configv7_long_positions != self.long.n_positions:
-                self.long.n_positions = round(st.session_state.edit_configv7_long_positions,0)
-                st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
-            if "edit_configv7_long" in st.session_state:
-                try:
-                    long = json.loads(st.session_state.edit_configv7_long)
-                    if st.session_state.edit_configv7_long_positions != float(long["n_positions"]):
-                        st.session_state.edit_configv7_long_positions = float(long["n_positions"])
-                except:
-                    st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
-                    error_popup("Invalid JSON long | RESET")
-        else:
-            st.session_state.edit_configv7_long_positions = float(self.long.n_positions)
+        if "edit_configv7_short_hsl_enabled" not in st.session_state:
+            st.session_state.edit_configv7_short_hsl_enabled = self.short.hsl_enabled
+        if "edit_configv7_short_hsl_no_restart_drawdown_threshold" not in st.session_state:
+            st.session_state.edit_configv7_short_hsl_no_restart_drawdown_threshold = float(self.short.hsl_no_restart_drawdown_threshold)
+        if "edit_configv7_short_hsl_orange_tier_mode" not in st.session_state:
+            st.session_state.edit_configv7_short_hsl_orange_tier_mode = self.short.hsl_orange_tier_mode
+        if "edit_configv7_short_hsl_panic_close_order_type" not in st.session_state:
+            st.session_state.edit_configv7_short_hsl_panic_close_order_type = self.short.hsl_panic_close_order_type
+        if "edit_configv7_short_hsl_tier_yellow" not in st.session_state:
+            st.session_state.edit_configv7_short_hsl_tier_yellow = float(self.short.hsl_tier_ratios["yellow"])
+        if "edit_configv7_short_hsl_tier_orange" not in st.session_state:
+            st.session_state.edit_configv7_short_hsl_tier_orange = float(self.short.hsl_tier_ratios["orange"])
 
-        if "edit_configv7_short_twe" in st.session_state:
-            if st.session_state.edit_configv7_short_twe != self.short.total_wallet_exposure_limit:
-                self.short.total_wallet_exposure_limit = round(st.session_state.edit_configv7_short_twe,2)
-                st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
-            if "edit_configv7_short" in st.session_state:
-                try:
-                    short = json.loads(st.session_state.edit_configv7_short)
-                    if st.session_state.edit_configv7_short_twe != float(short["total_wallet_exposure_limit"]):
-                        st.session_state.edit_configv7_short_twe = float(short["total_wallet_exposure_limit"])
-                except:
-                    st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
-                    error_popup("Invalid JSON short | RESET")
-        else:
-            st.session_state.edit_configv7_short_twe = float(self.short.total_wallet_exposure_limit)
+        long_hsl_changed = False
+        if st.session_state.edit_configv7_long_hsl_enabled != self.long.hsl_enabled:
+            self.long.hsl_enabled = st.session_state.edit_configv7_long_hsl_enabled
+            long_hsl_changed = True
+        if st.session_state.edit_configv7_long_hsl_no_restart_drawdown_threshold != self.long.hsl_no_restart_drawdown_threshold:
+            self.long.hsl_no_restart_drawdown_threshold = st.session_state.edit_configv7_long_hsl_no_restart_drawdown_threshold
+            long_hsl_changed = True
+        if st.session_state.edit_configv7_long_hsl_orange_tier_mode != self.long.hsl_orange_tier_mode:
+            self.long.hsl_orange_tier_mode = st.session_state.edit_configv7_long_hsl_orange_tier_mode
+            long_hsl_changed = True
+        if st.session_state.edit_configv7_long_hsl_panic_close_order_type != self.long.hsl_panic_close_order_type:
+            self.long.hsl_panic_close_order_type = st.session_state.edit_configv7_long_hsl_panic_close_order_type
+            long_hsl_changed = True
+        if st.session_state.edit_configv7_long_hsl_tier_yellow != float(self.long.hsl_tier_ratios["yellow"]) or st.session_state.edit_configv7_long_hsl_tier_orange != float(self.long.hsl_tier_ratios["orange"]):
+            self.long.hsl_tier_ratios = {
+                "yellow": st.session_state.edit_configv7_long_hsl_tier_yellow,
+                "orange": st.session_state.edit_configv7_long_hsl_tier_orange,
+            }
+            long_hsl_changed = True
+        if long_hsl_changed:
+            st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
 
-        if "edit_configv7_short_positions" in st.session_state:
-            if st.session_state.edit_configv7_short_positions != self.short.n_positions:
-                self.short.n_positions = round(st.session_state.edit_configv7_short_positions,0)
-                st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
-            if "edit_configv7_short" in st.session_state:
-                try:
-                    short = json.loads(st.session_state.edit_configv7_short)
-                    if st.session_state.edit_configv7_short_positions != float(short["n_positions"]):
-                        st.session_state.edit_configv7_short_positions = float(short["n_positions"])
-                except:
-                    st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
-                    error_popup("Invalid JSON short | RESET")   
-        else:
-            st.session_state.edit_configv7_short_positions = float(self.short.n_positions)
+        short_hsl_changed = False
+        if st.session_state.edit_configv7_short_hsl_enabled != self.short.hsl_enabled:
+            self.short.hsl_enabled = st.session_state.edit_configv7_short_hsl_enabled
+            short_hsl_changed = True
+        if st.session_state.edit_configv7_short_hsl_no_restart_drawdown_threshold != self.short.hsl_no_restart_drawdown_threshold:
+            self.short.hsl_no_restart_drawdown_threshold = st.session_state.edit_configv7_short_hsl_no_restart_drawdown_threshold
+            short_hsl_changed = True
+        if st.session_state.edit_configv7_short_hsl_orange_tier_mode != self.short.hsl_orange_tier_mode:
+            self.short.hsl_orange_tier_mode = st.session_state.edit_configv7_short_hsl_orange_tier_mode
+            short_hsl_changed = True
+        if st.session_state.edit_configv7_short_hsl_panic_close_order_type != self.short.hsl_panic_close_order_type:
+            self.short.hsl_panic_close_order_type = st.session_state.edit_configv7_short_hsl_panic_close_order_type
+            short_hsl_changed = True
+        if st.session_state.edit_configv7_short_hsl_tier_yellow != float(self.short.hsl_tier_ratios["yellow"]) or st.session_state.edit_configv7_short_hsl_tier_orange != float(self.short.hsl_tier_ratios["orange"]):
+            self.short.hsl_tier_ratios = {
+                "yellow": st.session_state.edit_configv7_short_hsl_tier_yellow,
+                "orange": st.session_state.edit_configv7_short_hsl_tier_orange,
+            }
+            short_hsl_changed = True
+        if short_hsl_changed:
+            st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
 
         if "edit_configv7_long" in st.session_state:
             if st.session_state.edit_configv7_long != json.dumps(self.bot["long"], indent=4):
@@ -1974,15 +2051,21 @@ class Bot:
         else:
             st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
         # Display config
-        col1, col2, col3, col4 = st.columns([1,1,1,1])
+        col1, col2 = st.columns([1, 1], vertical_alignment="top")
         with col1:
-            st.number_input("long twe", min_value=0.0, max_value=100.0, step=0.05, format="%.2f", key="edit_configv7_long_twe", help=pbgui_help.total_wallet_exposure_limit)
+            st.checkbox("long hsl_enabled", key="edit_configv7_long_hsl_enabled", help=pbgui_help.hsl_enabled)
+            st.number_input("long hsl_no_restart", min_value=0.0, max_value=1.0, step=0.01, format="%.2f", key="edit_configv7_long_hsl_no_restart_drawdown_threshold", help=pbgui_help.hsl_no_restart_drawdown_threshold)
+            st.selectbox("long hsl_orange_mode", ["graceful_stop", "tp_only_with_active_entry_cancellation"], key="edit_configv7_long_hsl_orange_tier_mode", help=pbgui_help.hsl_orange_tier_mode)
+            st.selectbox("long hsl_panic_order", ["limit", "market"], key="edit_configv7_long_hsl_panic_close_order_type", help=pbgui_help.hsl_panic_close_order_type)
+            st.number_input("long hsl_yellow", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_long_hsl_tier_yellow", help=pbgui_help.hsl_tier_ratios)
+            st.number_input("long hsl_orange", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_long_hsl_tier_orange", help=pbgui_help.hsl_tier_ratios)
         with col2:
-            st.number_input("long positions", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="edit_configv7_long_positions", help=pbgui_help.n_positions)
-        with col3:
-            st.number_input("short twe", min_value=0.0, max_value=100.0, step=0.05, format="%.2f", key="edit_configv7_short_twe", help=pbgui_help.total_wallet_exposure_limit)
-        with col4:
-            st.number_input("short positions", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="edit_configv7_short_positions", help=pbgui_help.n_positions)
+            st.checkbox("short hsl_enabled", key="edit_configv7_short_hsl_enabled", help=pbgui_help.hsl_enabled)
+            st.number_input("short hsl_no_restart", min_value=0.0, max_value=1.0, step=0.01, format="%.2f", key="edit_configv7_short_hsl_no_restart_drawdown_threshold", help=pbgui_help.hsl_no_restart_drawdown_threshold)
+            st.selectbox("short hsl_orange_mode", ["graceful_stop", "tp_only_with_active_entry_cancellation"], key="edit_configv7_short_hsl_orange_tier_mode", help=pbgui_help.hsl_orange_tier_mode)
+            st.selectbox("short hsl_panic_order", ["limit", "market"], key="edit_configv7_short_hsl_panic_close_order_type", help=pbgui_help.hsl_panic_close_order_type)
+            st.number_input("short hsl_yellow", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_short_hsl_tier_yellow", help=pbgui_help.hsl_tier_ratios)
+            st.number_input("short hsl_orange", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_short_hsl_tier_orange", help=pbgui_help.hsl_tier_ratios)
         col1, col2 = st.columns([1,1])
         with col1:
             st.text_area(f'long', key="edit_configv7_long", height=600)
@@ -2063,6 +2146,11 @@ class Long:
         self._entry_trailing_retracement_we_weight = 0.0
         self._entry_trailing_retracement_volatility_weight = 0.0
         self._entry_volatility_ema_span_hours = 72
+        self._hsl_enabled = False
+        self._hsl_no_restart_drawdown_threshold = 1.0
+        self._hsl_orange_tier_mode = "tp_only_with_active_entry_cancellation"
+        self._hsl_panic_close_order_type = "limit"
+        self._hsl_tier_ratios = {"orange": 0.75, "yellow": 0.5}
         self._filter_volatility_ema_span = 60.0
         self._filter_volatility_drop_pct = 0.0
         self._filter_volume_drop_pct = 0.95
@@ -2101,6 +2189,11 @@ class Long:
             "entry_trailing_retracement_we_weight": self._entry_trailing_retracement_we_weight,
             "entry_trailing_retracement_volatility_weight": self._entry_trailing_retracement_volatility_weight,
             "entry_volatility_ema_span_hours": self._entry_volatility_ema_span_hours,
+            "hsl_enabled": self._hsl_enabled,
+            "hsl_no_restart_drawdown_threshold": self._hsl_no_restart_drawdown_threshold,
+            "hsl_orange_tier_mode": self._hsl_orange_tier_mode,
+            "hsl_panic_close_order_type": self._hsl_panic_close_order_type,
+            "hsl_tier_ratios": self._hsl_tier_ratios,
             "filter_volatility_ema_span": self._filter_volatility_ema_span,
             "filter_volatility_drop_pct": self._filter_volatility_drop_pct,
             "filter_volume_drop_pct": self._filter_volume_drop_pct,
@@ -2183,6 +2276,16 @@ class Long:
             self.entry_trailing_retracement_volatility_weight = new_long["entry_trailing_retracement_volatility_weight"]
         if "entry_volatility_ema_span_hours" in new_long:
             self.entry_volatility_ema_span_hours = new_long["entry_volatility_ema_span_hours"]
+        if "hsl_enabled" in new_long:
+            self.hsl_enabled = new_long["hsl_enabled"]
+        if "hsl_no_restart_drawdown_threshold" in new_long:
+            self.hsl_no_restart_drawdown_threshold = new_long["hsl_no_restart_drawdown_threshold"]
+        if "hsl_orange_tier_mode" in new_long:
+            self.hsl_orange_tier_mode = new_long["hsl_orange_tier_mode"]
+        if "hsl_panic_close_order_type" in new_long:
+            self.hsl_panic_close_order_type = new_long["hsl_panic_close_order_type"]
+        if "hsl_tier_ratios" in new_long:
+            self.hsl_tier_ratios = new_long["hsl_tier_ratios"]
         # Fix for old configs
         elif "entry_grid_spacing_log_span_hours" in new_long:
             self.entry_volatility_ema_span_hours = new_long["entry_grid_spacing_log_span_hours"]
@@ -2275,6 +2378,16 @@ class Long:
     def entry_trailing_retracement_volatility_weight(self): return self._entry_trailing_retracement_volatility_weight
     @property
     def entry_volatility_ema_span_hours(self): return self._entry_volatility_ema_span_hours
+    @property
+    def hsl_enabled(self): return self._hsl_enabled
+    @property
+    def hsl_no_restart_drawdown_threshold(self): return self._hsl_no_restart_drawdown_threshold
+    @property
+    def hsl_orange_tier_mode(self): return self._hsl_orange_tier_mode
+    @property
+    def hsl_panic_close_order_type(self): return self._hsl_panic_close_order_type
+    @property
+    def hsl_tier_ratios(self): return self._hsl_tier_ratios
     @property
     def filter_volatility_ema_span(self): return self._filter_volatility_ema_span
     @property
@@ -2398,6 +2511,30 @@ class Long:
     def entry_volatility_ema_span_hours(self, new_entry_volatility_ema_span_hours):
         self._entry_volatility_ema_span_hours = new_entry_volatility_ema_span_hours
         self._long["entry_volatility_ema_span_hours"] = self._entry_volatility_ema_span_hours
+    @hsl_enabled.setter
+    def hsl_enabled(self, new_hsl_enabled):
+        self._hsl_enabled = bool(new_hsl_enabled)
+        self._long["hsl_enabled"] = self._hsl_enabled
+    @hsl_no_restart_drawdown_threshold.setter
+    def hsl_no_restart_drawdown_threshold(self, new_hsl_no_restart_drawdown_threshold):
+        self._hsl_no_restart_drawdown_threshold = float(new_hsl_no_restart_drawdown_threshold)
+        self._long["hsl_no_restart_drawdown_threshold"] = self._hsl_no_restart_drawdown_threshold
+    @hsl_orange_tier_mode.setter
+    def hsl_orange_tier_mode(self, new_hsl_orange_tier_mode):
+        self._hsl_orange_tier_mode = new_hsl_orange_tier_mode
+        self._long["hsl_orange_tier_mode"] = self._hsl_orange_tier_mode
+    @hsl_panic_close_order_type.setter
+    def hsl_panic_close_order_type(self, new_hsl_panic_close_order_type):
+        self._hsl_panic_close_order_type = new_hsl_panic_close_order_type
+        self._long["hsl_panic_close_order_type"] = self._hsl_panic_close_order_type
+    @hsl_tier_ratios.setter
+    def hsl_tier_ratios(self, new_hsl_tier_ratios):
+        current = dict(self._hsl_tier_ratios)
+        if isinstance(new_hsl_tier_ratios, dict):
+            current["orange"] = float(new_hsl_tier_ratios.get("orange", current.get("orange", 0.75)))
+            current["yellow"] = float(new_hsl_tier_ratios.get("yellow", current.get("yellow", 0.5)))
+        self._hsl_tier_ratios = current
+        self._long["hsl_tier_ratios"] = self._hsl_tier_ratios
     @filter_volatility_ema_span.setter
     def filter_volatility_ema_span(self, new_filter_volatility_ema_span):
         self._filter_volatility_ema_span = new_filter_volatility_ema_span
@@ -2480,6 +2617,11 @@ class Short:
         self._entry_trailing_retracement_we_weight = 0.0
         self._entry_trailing_retracement_volatility_weight = 0.0
         self._entry_volatility_ema_span_hours = 72
+        self._hsl_enabled = False
+        self._hsl_no_restart_drawdown_threshold = 1.0
+        self._hsl_orange_tier_mode = "tp_only_with_active_entry_cancellation"
+        self._hsl_panic_close_order_type = "limit"
+        self._hsl_tier_ratios = {"orange": 0.75, "yellow": 0.5}
         self._filter_volatility_ema_span = 60.0
         self._filter_volatility_drop_pct = 0.0
         self._filter_volume_drop_pct = 0.95
@@ -2518,6 +2660,11 @@ class Short:
             "entry_trailing_retracement_we_weight": self._entry_trailing_retracement_we_weight,
             "entry_trailing_retracement_volatility_weight": self._entry_trailing_retracement_volatility_weight,
             "entry_volatility_ema_span_hours": self._entry_volatility_ema_span_hours,
+            "hsl_enabled": self._hsl_enabled,
+            "hsl_no_restart_drawdown_threshold": self._hsl_no_restart_drawdown_threshold,
+            "hsl_orange_tier_mode": self._hsl_orange_tier_mode,
+            "hsl_panic_close_order_type": self._hsl_panic_close_order_type,
+            "hsl_tier_ratios": self._hsl_tier_ratios,
             "filter_volatility_ema_span": self._filter_volatility_ema_span,
             "filter_volatility_drop_pct": self._filter_volatility_drop_pct,
             "filter_volume_drop_pct": self._filter_volume_drop_pct,
@@ -2600,6 +2747,16 @@ class Short:
             self.entry_trailing_retracement_volatility_weight = new_short["entry_trailing_retracement_volatility_weight"]
         if "entry_volatility_ema_span_hours" in new_short:
             self.entry_volatility_ema_span_hours = new_short["entry_volatility_ema_span_hours"]
+        if "hsl_enabled" in new_short:
+            self.hsl_enabled = new_short["hsl_enabled"]
+        if "hsl_no_restart_drawdown_threshold" in new_short:
+            self.hsl_no_restart_drawdown_threshold = new_short["hsl_no_restart_drawdown_threshold"]
+        if "hsl_orange_tier_mode" in new_short:
+            self.hsl_orange_tier_mode = new_short["hsl_orange_tier_mode"]
+        if "hsl_panic_close_order_type" in new_short:
+            self.hsl_panic_close_order_type = new_short["hsl_panic_close_order_type"]
+        if "hsl_tier_ratios" in new_short:
+            self.hsl_tier_ratios = new_short["hsl_tier_ratios"]
         # Fix for old configs
         elif "entry_grid_spacing_log_span_hours" in new_short:
             self.entry_volatility_ema_span_hours = new_short["entry_grid_spacing_log_span_hours"]
@@ -2692,6 +2849,16 @@ class Short:
     def entry_trailing_retracement_volatility_weight(self): return self._entry_trailing_retracement_volatility_weight
     @property
     def entry_volatility_ema_span_hours(self): return self._entry_volatility_ema_span_hours
+    @property
+    def hsl_enabled(self): return self._hsl_enabled
+    @property
+    def hsl_no_restart_drawdown_threshold(self): return self._hsl_no_restart_drawdown_threshold
+    @property
+    def hsl_orange_tier_mode(self): return self._hsl_orange_tier_mode
+    @property
+    def hsl_panic_close_order_type(self): return self._hsl_panic_close_order_type
+    @property
+    def hsl_tier_ratios(self): return self._hsl_tier_ratios
     @property
     def filter_volatility_ema_span(self): return self._filter_volatility_ema_span
     @property
@@ -2815,6 +2982,30 @@ class Short:
     def entry_volatility_ema_span_hours(self, new_entry_volatility_ema_span_hours):
         self._entry_volatility_ema_span_hours = new_entry_volatility_ema_span_hours
         self._short["entry_volatility_ema_span_hours"] = self._entry_volatility_ema_span_hours
+    @hsl_enabled.setter
+    def hsl_enabled(self, new_hsl_enabled):
+        self._hsl_enabled = bool(new_hsl_enabled)
+        self._short["hsl_enabled"] = self._hsl_enabled
+    @hsl_no_restart_drawdown_threshold.setter
+    def hsl_no_restart_drawdown_threshold(self, new_hsl_no_restart_drawdown_threshold):
+        self._hsl_no_restart_drawdown_threshold = float(new_hsl_no_restart_drawdown_threshold)
+        self._short["hsl_no_restart_drawdown_threshold"] = self._hsl_no_restart_drawdown_threshold
+    @hsl_orange_tier_mode.setter
+    def hsl_orange_tier_mode(self, new_hsl_orange_tier_mode):
+        self._hsl_orange_tier_mode = new_hsl_orange_tier_mode
+        self._short["hsl_orange_tier_mode"] = self._hsl_orange_tier_mode
+    @hsl_panic_close_order_type.setter
+    def hsl_panic_close_order_type(self, new_hsl_panic_close_order_type):
+        self._hsl_panic_close_order_type = new_hsl_panic_close_order_type
+        self._short["hsl_panic_close_order_type"] = self._hsl_panic_close_order_type
+    @hsl_tier_ratios.setter
+    def hsl_tier_ratios(self, new_hsl_tier_ratios):
+        current = dict(self._hsl_tier_ratios)
+        if isinstance(new_hsl_tier_ratios, dict):
+            current["orange"] = float(new_hsl_tier_ratios.get("orange", current.get("orange", 0.75)))
+            current["yellow"] = float(new_hsl_tier_ratios.get("yellow", current.get("yellow", 0.5)))
+        self._hsl_tier_ratios = current
+        self._short["hsl_tier_ratios"] = self._hsl_tier_ratios
     @filter_volatility_ema_span.setter
     def filter_volatility_ema_span(self, new_filter_volatility_ema_span):
         self._filter_volatility_ema_span = new_filter_volatility_ema_span
@@ -2959,8 +3150,12 @@ class Live:
         self._forced_mode_short = ""
         # PB7 live defaults (see pb7/src/config_utils.py)
         self._hedge_mode = True
+        self._hsl_position_during_cooldown_policy = "panic"
+        self._hsl_signal_mode = "unified"
         self._ignored_coins = IgnoredCoins()
         self._leverage = 10.0
+        self._margin_mode_preference = "cross"
+        self._market_order_near_touch_threshold = 0.001
         self._market_orders_allowed = True
         self._max_disk_candles_per_symbol_per_tf = 2000000
         self._max_memory_candles_per_symbol = 20000
@@ -2996,8 +3191,12 @@ class Live:
             "forced_mode_long": self._forced_mode_long,
             "forced_mode_short": self._forced_mode_short,
             "hedge_mode": self._hedge_mode,
+            "hsl_position_during_cooldown_policy": self._hsl_position_during_cooldown_policy,
+            "hsl_signal_mode": self._hsl_signal_mode,
             "ignored_coins": self._ignored_coins._ignored_coins,
             "leverage": self._leverage,
+            "margin_mode_preference": self._margin_mode_preference,
+            "market_order_near_touch_threshold": self._market_order_near_touch_threshold,
             "market_orders_allowed": self._market_orders_allowed,
             "max_disk_candles_per_symbol_per_tf": self._max_disk_candles_per_symbol_per_tf,
             "max_memory_candles_per_symbol": self._max_memory_candles_per_symbol,
@@ -3048,10 +3247,18 @@ class Live:
             self.forced_mode_short = new_live["forced_mode_short"]
         if "hedge_mode" in new_live:
             self.hedge_mode = new_live["hedge_mode"]
+        if "hsl_position_during_cooldown_policy" in new_live:
+            self.hsl_position_during_cooldown_policy = new_live["hsl_position_during_cooldown_policy"]
+        if "hsl_signal_mode" in new_live:
+            self.hsl_signal_mode = new_live["hsl_signal_mode"]
         if "ignored_coins" in new_live:
             self.ignored_coins = new_live["ignored_coins"]
         if "leverage" in new_live:
             self.leverage = new_live["leverage"]
+        if "margin_mode_preference" in new_live:
+            self.margin_mode_preference = new_live["margin_mode_preference"]
+        if "market_order_near_touch_threshold" in new_live:
+            self.market_order_near_touch_threshold = new_live["market_order_near_touch_threshold"]
         if "market_orders_allowed" in new_live:
             self.market_orders_allowed = new_live["market_orders_allowed"]
         if "max_disk_candles_per_symbol_per_tf" in new_live:
@@ -3118,9 +3325,17 @@ class Live:
     @property
     def hedge_mode(self): return self._hedge_mode
     @property
+    def hsl_position_during_cooldown_policy(self): return self._hsl_position_during_cooldown_policy
+    @property
+    def hsl_signal_mode(self): return self._hsl_signal_mode
+    @property
     def ignored_coins(self): return self._ignored_coins
     @property
     def leverage(self): return self._leverage
+    @property
+    def margin_mode_preference(self): return self._margin_mode_preference
+    @property
+    def market_order_near_touch_threshold(self): return self._market_order_near_touch_threshold
     @property
     def market_orders_allowed(self): return self._market_orders_allowed
     @property
@@ -3204,6 +3419,14 @@ class Live:
     def hedge_mode(self, new_hedge_mode):
         self._hedge_mode = bool(new_hedge_mode)
         self._live["hedge_mode"] = self._hedge_mode
+    @hsl_position_during_cooldown_policy.setter
+    def hsl_position_during_cooldown_policy(self, new_hsl_position_during_cooldown_policy):
+        self._hsl_position_during_cooldown_policy = new_hsl_position_during_cooldown_policy
+        self._live["hsl_position_during_cooldown_policy"] = self._hsl_position_during_cooldown_policy
+    @hsl_signal_mode.setter
+    def hsl_signal_mode(self, new_hsl_signal_mode):
+        self._hsl_signal_mode = new_hsl_signal_mode
+        self._live["hsl_signal_mode"] = self._hsl_signal_mode
     @ignored_coins.setter
     def ignored_coins(self, new_ignored_coins):
         self._ignored_coins.ignored_coins = new_ignored_coins
@@ -3212,6 +3435,16 @@ class Live:
     def leverage(self, new_leverage):
         self._leverage = new_leverage
         self._live["leverage"] = self._leverage
+    @margin_mode_preference.setter
+    def margin_mode_preference(self, new_margin_mode_preference):
+        self._margin_mode_preference = new_margin_mode_preference
+        self._live["margin_mode_preference"] = self._margin_mode_preference
+    @market_order_near_touch_threshold.setter
+    def market_order_near_touch_threshold(self, new_market_order_near_touch_threshold):
+        self._market_order_near_touch_threshold = max(
+            0.0, 0.001 if new_market_order_near_touch_threshold in (None, "") else float(new_market_order_near_touch_threshold)
+        )
+        self._live["market_order_near_touch_threshold"] = self._market_order_near_touch_threshold
     @market_orders_allowed.setter
     def market_orders_allowed(self, new_market_orders_allowed):
         self._market_orders_allowed = new_market_orders_allowed
@@ -3797,6 +4030,34 @@ class Bounds:
     FILTER_VOLUME_EMA_SPAN_FORMAT = f'%.{FILTER_VOLUME_EMA_SPAN_ROUND}f'
     FILTER_VOLUME_EMA_SPAN_WIDGET_STEP = 0.1
 
+    FORAGER_SCORE_WEIGHT_MIN = 0.0
+    FORAGER_SCORE_WEIGHT_MAX = 1.0
+    FORAGER_SCORE_WEIGHT_STEP = 0.01
+    FORAGER_SCORE_WEIGHT_ROUND = 2
+    FORAGER_SCORE_WEIGHT_FORMAT = f'%.{FORAGER_SCORE_WEIGHT_ROUND}f'
+    FORAGER_SCORE_WEIGHT_WIDGET_STEP = 0.00001
+
+    HSL_COOLDOWN_MINUTES_AFTER_RED_MIN = 1.0
+    HSL_COOLDOWN_MINUTES_AFTER_RED_MAX = 2880.0
+    HSL_COOLDOWN_MINUTES_AFTER_RED_STEP = 1.0
+    HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND = 0
+    HSL_COOLDOWN_MINUTES_AFTER_RED_FORMAT = f'%.{HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND}f'
+    HSL_COOLDOWN_MINUTES_AFTER_RED_WIDGET_STEP = 1.0
+
+    HSL_EMA_SPAN_MINUTES_MIN = 1.0
+    HSL_EMA_SPAN_MINUTES_MAX = 2880.0
+    HSL_EMA_SPAN_MINUTES_STEP = 1.0
+    HSL_EMA_SPAN_MINUTES_ROUND = 0
+    HSL_EMA_SPAN_MINUTES_FORMAT = f'%.{HSL_EMA_SPAN_MINUTES_ROUND}f'
+    HSL_EMA_SPAN_MINUTES_WIDGET_STEP = 1.0
+
+    HSL_RED_THRESHOLD_MIN = 0.0
+    HSL_RED_THRESHOLD_MAX = 1.0
+    HSL_RED_THRESHOLD_STEP = 0.001
+    HSL_RED_THRESHOLD_ROUND = 3
+    HSL_RED_THRESHOLD_FORMAT = f'%.{HSL_RED_THRESHOLD_ROUND}f'
+    HSL_RED_THRESHOLD_WIDGET_STEP = 0.00001
+
     N_POSITIONS_MIN = 0.0
     N_POSITIONS_MAX = 100.0
     N_POSITIONS_STEP = 1.0
@@ -3946,6 +4207,24 @@ class Bounds:
         self._long_filter_volume_ema_span_0 = 10.0
         self._long_filter_volume_ema_span_1 = 360.0
         self._long_filter_volume_ema_span_step = 0.0
+        self._long_forager_score_weights_ema_readiness_0 = 0.0
+        self._long_forager_score_weights_ema_readiness_1 = 1.0
+        self._long_forager_score_weights_ema_readiness_step = 0.01
+        self._long_forager_score_weights_volatility_0 = 0.0
+        self._long_forager_score_weights_volatility_1 = 1.0
+        self._long_forager_score_weights_volatility_step = 0.01
+        self._long_forager_score_weights_volume_0 = 0.0
+        self._long_forager_score_weights_volume_1 = 1.0
+        self._long_forager_score_weights_volume_step = 0.01
+        self._long_hsl_cooldown_minutes_after_red_0 = 1.0
+        self._long_hsl_cooldown_minutes_after_red_1 = 2880.0
+        self._long_hsl_cooldown_minutes_after_red_step = 10.0
+        self._long_hsl_ema_span_minutes_0 = 1.0
+        self._long_hsl_ema_span_minutes_1 = 2880.0
+        self._long_hsl_ema_span_minutes_step = 10.0
+        self._long_hsl_red_threshold_0 = 0.01
+        self._long_hsl_red_threshold_1 = 0.12
+        self._long_hsl_red_threshold_step = 0.001
         self._long_n_positions_0 = 1.0
         self._long_n_positions_1 = 20.0
         self._long_n_positions_step = 0.0
@@ -4058,6 +4337,24 @@ class Bounds:
         self._short_filter_volume_ema_span_0 = 10.0
         self._short_filter_volume_ema_span_1 = 360.0
         self._short_filter_volume_ema_span_step = 0.0
+        self._short_forager_score_weights_ema_readiness_0 = 0.0
+        self._short_forager_score_weights_ema_readiness_1 = 1.0
+        self._short_forager_score_weights_ema_readiness_step = 0.01
+        self._short_forager_score_weights_volatility_0 = 0.0
+        self._short_forager_score_weights_volatility_1 = 1.0
+        self._short_forager_score_weights_volatility_step = 0.01
+        self._short_forager_score_weights_volume_0 = 0.0
+        self._short_forager_score_weights_volume_1 = 1.0
+        self._short_forager_score_weights_volume_step = 0.01
+        self._short_hsl_cooldown_minutes_after_red_0 = 1.0
+        self._short_hsl_cooldown_minutes_after_red_1 = 2880.0
+        self._short_hsl_cooldown_minutes_after_red_step = 10.0
+        self._short_hsl_ema_span_minutes_0 = 1.0
+        self._short_hsl_ema_span_minutes_1 = 2880.0
+        self._short_hsl_ema_span_minutes_step = 10.0
+        self._short_hsl_red_threshold_0 = 0.01
+        self._short_hsl_red_threshold_1 = 0.12
+        self._short_hsl_red_threshold_step = 0.001
         self._short_n_positions_0 = 1.0
         self._short_n_positions_1 = 20.0
         self._short_n_positions_step = 0.0
@@ -4116,6 +4413,15 @@ class Bounds:
                 "long_filter_volume_drop_pct": [self._long_filter_volume_drop_pct_0, self._long_filter_volume_drop_pct_1, self._long_filter_volume_drop_pct_step],
                 "long_filter_volatility_drop_pct": [self._long_filter_volatility_drop_pct_0, self._long_filter_volatility_drop_pct_1, self._long_filter_volatility_drop_pct_step],
                 "long_filter_volume_ema_span": [self._long_filter_volume_ema_span_0, self._long_filter_volume_ema_span_1, self._long_filter_volume_ema_span_step],
+                "long_forager_score_weights_ema_readiness": [self._long_forager_score_weights_ema_readiness_0, self._long_forager_score_weights_ema_readiness_1, self._long_forager_score_weights_ema_readiness_step],
+                "long_forager_score_weights_volatility": [self._long_forager_score_weights_volatility_0, self._long_forager_score_weights_volatility_1, self._long_forager_score_weights_volatility_step],
+                "long_forager_score_weights_volume": [self._long_forager_score_weights_volume_0, self._long_forager_score_weights_volume_1, self._long_forager_score_weights_volume_step],
+                "long_forager_volatility_ema_span": [self._long_filter_volatility_ema_span_0, self._long_filter_volatility_ema_span_1, self._long_filter_volatility_ema_span_step],
+                "long_forager_volume_drop_pct": [self._long_filter_volume_drop_pct_0, self._long_filter_volume_drop_pct_1, self._long_filter_volume_drop_pct_step],
+                "long_forager_volume_ema_span": [self._long_filter_volume_ema_span_0, self._long_filter_volume_ema_span_1, self._long_filter_volume_ema_span_step],
+                "long_hsl_cooldown_minutes_after_red": [self._long_hsl_cooldown_minutes_after_red_0, self._long_hsl_cooldown_minutes_after_red_1, self._long_hsl_cooldown_minutes_after_red_step],
+                "long_hsl_ema_span_minutes": [self._long_hsl_ema_span_minutes_0, self._long_hsl_ema_span_minutes_1, self._long_hsl_ema_span_minutes_step],
+                "long_hsl_red_threshold": [self._long_hsl_red_threshold_0, self._long_hsl_red_threshold_1, self._long_hsl_red_threshold_step],
                 "long_n_positions": [self._long_n_positions_0, self._long_n_positions_1, self._long_n_positions_step],
                 "long_total_wallet_exposure_limit": [self._long_total_wallet_exposure_limit_0, self._long_total_wallet_exposure_limit_1, self._long_total_wallet_exposure_limit_step],
                 "long_unstuck_close_pct": [self._long_unstuck_close_pct_0, self._long_unstuck_close_pct_1, self._long_unstuck_close_pct_step],
@@ -4155,6 +4461,15 @@ class Bounds:
                 "short_filter_volume_drop_pct": [self._short_filter_volume_drop_pct_0, self._short_filter_volume_drop_pct_1, self._short_filter_volume_drop_pct_step],
                 "short_filter_volatility_drop_pct": [self._short_filter_volatility_drop_pct_0, self._short_filter_volatility_drop_pct_1, self._short_filter_volatility_drop_pct_step],
                 "short_filter_volume_ema_span": [self._short_filter_volume_ema_span_0, self._short_filter_volume_ema_span_1, self._short_filter_volume_ema_span_step],
+                "short_forager_score_weights_ema_readiness": [self._short_forager_score_weights_ema_readiness_0, self._short_forager_score_weights_ema_readiness_1, self._short_forager_score_weights_ema_readiness_step],
+                "short_forager_score_weights_volatility": [self._short_forager_score_weights_volatility_0, self._short_forager_score_weights_volatility_1, self._short_forager_score_weights_volatility_step],
+                "short_forager_score_weights_volume": [self._short_forager_score_weights_volume_0, self._short_forager_score_weights_volume_1, self._short_forager_score_weights_volume_step],
+                "short_forager_volatility_ema_span": [self._short_filter_volatility_ema_span_0, self._short_filter_volatility_ema_span_1, self._short_filter_volatility_ema_span_step],
+                "short_forager_volume_drop_pct": [self._short_filter_volume_drop_pct_0, self._short_filter_volume_drop_pct_1, self._short_filter_volume_drop_pct_step],
+                "short_forager_volume_ema_span": [self._short_filter_volume_ema_span_0, self._short_filter_volume_ema_span_1, self._short_filter_volume_ema_span_step],
+                "short_hsl_cooldown_minutes_after_red": [self._short_hsl_cooldown_minutes_after_red_0, self._short_hsl_cooldown_minutes_after_red_1, self._short_hsl_cooldown_minutes_after_red_step],
+                "short_hsl_ema_span_minutes": [self._short_hsl_ema_span_minutes_0, self._short_hsl_ema_span_minutes_1, self._short_hsl_ema_span_minutes_step],
+                "short_hsl_red_threshold": [self._short_hsl_red_threshold_0, self._short_hsl_red_threshold_1, self._short_hsl_red_threshold_step],
                 "short_n_positions": [self._short_n_positions_0, self._short_n_positions_1, self._short_n_positions_step],
                 "short_total_wallet_exposure_limit": [self._short_total_wallet_exposure_limit_0, self._short_total_wallet_exposure_limit_1, self._short_total_wallet_exposure_limit_step],
                 "short_unstuck_close_pct": [self._short_unstuck_close_pct_0, self._short_unstuck_close_pct_1, self._short_unstuck_close_pct_step],
@@ -4182,7 +4497,19 @@ class Bounds:
         """
 
         exported = {}
+        legacy_export_skip = {
+            "long_filter_volatility_ema_span",
+            "long_filter_volume_drop_pct",
+            "long_filter_volatility_drop_pct",
+            "long_filter_volume_ema_span",
+            "short_filter_volatility_ema_span",
+            "short_filter_volume_drop_pct",
+            "short_filter_volatility_drop_pct",
+            "short_filter_volume_ema_span",
+        }
         for key, val in self._bounds.items():
+            if key in legacy_export_skip:
+                continue
             if isinstance(val, (list, tuple)) and len(val) >= 2:
                 lo, hi = val[0], val[1]
                 if len(val) >= 3:
@@ -4398,6 +4725,9 @@ class Bounds:
                 self.long_filter_volatility_ema_span_step = new_bounds["long_filter_volatility_ema_span"][2]
             else:
                 self.long_filter_volatility_ema_span_step = 0.0
+            self.long_forager_volatility_ema_span_0 = self.long_filter_volatility_ema_span_0
+            self.long_forager_volatility_ema_span_1 = self.long_filter_volatility_ema_span_1
+            self.long_forager_volatility_ema_span_step = self.long_filter_volatility_ema_span_step
         # Fix for old configs
         elif "long_filter_log_range_ema_span" in new_bounds:
             self.long_filter_volatility_ema_span_0 = new_bounds["long_filter_log_range_ema_span"][0]
@@ -4416,6 +4746,45 @@ class Bounds:
                 self.long_filter_volume_drop_pct_step = new_bounds["long_filter_volume_drop_pct"][2]
             else:
                 self.long_filter_volume_drop_pct_step = 0.0
+            self.long_forager_volume_drop_pct_0 = self.long_filter_volume_drop_pct_0
+            self.long_forager_volume_drop_pct_1 = self.long_filter_volume_drop_pct_1
+            self.long_forager_volume_drop_pct_step = self.long_filter_volume_drop_pct_step
+        if "long_forager_score_weights_ema_readiness" in new_bounds:
+            self.long_forager_score_weights_ema_readiness_0 = new_bounds["long_forager_score_weights_ema_readiness"][0]
+            self.long_forager_score_weights_ema_readiness_1 = new_bounds["long_forager_score_weights_ema_readiness"][1]
+            self.long_forager_score_weights_ema_readiness_step = new_bounds["long_forager_score_weights_ema_readiness"][2] if len(new_bounds["long_forager_score_weights_ema_readiness"]) >= 3 else 0.0
+        if "long_forager_score_weights_volatility" in new_bounds:
+            self.long_forager_score_weights_volatility_0 = new_bounds["long_forager_score_weights_volatility"][0]
+            self.long_forager_score_weights_volatility_1 = new_bounds["long_forager_score_weights_volatility"][1]
+            self.long_forager_score_weights_volatility_step = new_bounds["long_forager_score_weights_volatility"][2] if len(new_bounds["long_forager_score_weights_volatility"]) >= 3 else 0.0
+        if "long_forager_score_weights_volume" in new_bounds:
+            self.long_forager_score_weights_volume_0 = new_bounds["long_forager_score_weights_volume"][0]
+            self.long_forager_score_weights_volume_1 = new_bounds["long_forager_score_weights_volume"][1]
+            self.long_forager_score_weights_volume_step = new_bounds["long_forager_score_weights_volume"][2] if len(new_bounds["long_forager_score_weights_volume"]) >= 3 else 0.0
+        if "long_forager_volatility_ema_span" in new_bounds:
+            self.long_forager_volatility_ema_span_0 = new_bounds["long_forager_volatility_ema_span"][0]
+            self.long_forager_volatility_ema_span_1 = new_bounds["long_forager_volatility_ema_span"][1]
+            self.long_forager_volatility_ema_span_step = new_bounds["long_forager_volatility_ema_span"][2] if len(new_bounds["long_forager_volatility_ema_span"]) >= 3 else 0.0
+        if "long_forager_volume_drop_pct" in new_bounds:
+            self.long_forager_volume_drop_pct_0 = new_bounds["long_forager_volume_drop_pct"][0]
+            self.long_forager_volume_drop_pct_1 = new_bounds["long_forager_volume_drop_pct"][1]
+            self.long_forager_volume_drop_pct_step = new_bounds["long_forager_volume_drop_pct"][2] if len(new_bounds["long_forager_volume_drop_pct"]) >= 3 else 0.0
+        if "long_forager_volume_ema_span" in new_bounds:
+            self.long_forager_volume_ema_span_0 = new_bounds["long_forager_volume_ema_span"][0]
+            self.long_forager_volume_ema_span_1 = new_bounds["long_forager_volume_ema_span"][1]
+            self.long_forager_volume_ema_span_step = new_bounds["long_forager_volume_ema_span"][2] if len(new_bounds["long_forager_volume_ema_span"]) >= 3 else 0.0
+        if "long_hsl_cooldown_minutes_after_red" in new_bounds:
+            self.long_hsl_cooldown_minutes_after_red_0 = new_bounds["long_hsl_cooldown_minutes_after_red"][0]
+            self.long_hsl_cooldown_minutes_after_red_1 = new_bounds["long_hsl_cooldown_minutes_after_red"][1]
+            self.long_hsl_cooldown_minutes_after_red_step = new_bounds["long_hsl_cooldown_minutes_after_red"][2] if len(new_bounds["long_hsl_cooldown_minutes_after_red"]) >= 3 else 0.0
+        if "long_hsl_ema_span_minutes" in new_bounds:
+            self.long_hsl_ema_span_minutes_0 = new_bounds["long_hsl_ema_span_minutes"][0]
+            self.long_hsl_ema_span_minutes_1 = new_bounds["long_hsl_ema_span_minutes"][1]
+            self.long_hsl_ema_span_minutes_step = new_bounds["long_hsl_ema_span_minutes"][2] if len(new_bounds["long_hsl_ema_span_minutes"]) >= 3 else 0.0
+        if "long_hsl_red_threshold" in new_bounds:
+            self.long_hsl_red_threshold_0 = new_bounds["long_hsl_red_threshold"][0]
+            self.long_hsl_red_threshold_1 = new_bounds["long_hsl_red_threshold"][1]
+            self.long_hsl_red_threshold_step = new_bounds["long_hsl_red_threshold"][2] if len(new_bounds["long_hsl_red_threshold"]) >= 3 else 0.0
         # Fix for old configs
         elif "long_filter_relative_volume_clip_pct" in new_bounds:
             self.long_filter_volume_drop_pct_0 = new_bounds["long_filter_relative_volume_clip_pct"][0]
@@ -4434,6 +4803,9 @@ class Bounds:
                 self.long_filter_volume_ema_span_step = new_bounds["long_filter_volume_ema_span"][2]
             else:
                 self.long_filter_volume_ema_span_step = 0.0
+            self.long_forager_volume_ema_span_0 = self.long_filter_volume_ema_span_0
+            self.long_forager_volume_ema_span_1 = self.long_filter_volume_ema_span_1
+            self.long_forager_volume_ema_span_step = self.long_filter_volume_ema_span_step
         # Fix for old configs
         elif "long_filter_rolling_window" in new_bounds:
             self.long_filter_volume_ema_span_0 = new_bounds["long_filter_rolling_window"][0]
@@ -4671,6 +5043,9 @@ class Bounds:
                 self.short_filter_volatility_ema_span_step = new_bounds["short_filter_volatility_ema_span"][2]
             else:
                 self.short_filter_volatility_ema_span_step = 0.0
+            self.short_forager_volatility_ema_span_0 = self.short_filter_volatility_ema_span_0
+            self.short_forager_volatility_ema_span_1 = self.short_filter_volatility_ema_span_1
+            self.short_forager_volatility_ema_span_step = self.short_filter_volatility_ema_span_step
         # Fix for old configs
         elif "short_filter_log_range_ema_span" in new_bounds:
             self.short_filter_volatility_ema_span_0 = new_bounds["short_filter_log_range_ema_span"][0]
@@ -4688,6 +5063,45 @@ class Bounds:
                 self.short_filter_volume_drop_pct_step = new_bounds["short_filter_volume_drop_pct"][2]
             else:
                 self.short_filter_volume_drop_pct_step = 0.0
+            self.short_forager_volume_drop_pct_0 = self.short_filter_volume_drop_pct_0
+            self.short_forager_volume_drop_pct_1 = self.short_filter_volume_drop_pct_1
+            self.short_forager_volume_drop_pct_step = self.short_filter_volume_drop_pct_step
+        if "short_forager_score_weights_ema_readiness" in new_bounds:
+            self.short_forager_score_weights_ema_readiness_0 = new_bounds["short_forager_score_weights_ema_readiness"][0]
+            self.short_forager_score_weights_ema_readiness_1 = new_bounds["short_forager_score_weights_ema_readiness"][1]
+            self.short_forager_score_weights_ema_readiness_step = new_bounds["short_forager_score_weights_ema_readiness"][2] if len(new_bounds["short_forager_score_weights_ema_readiness"]) >= 3 else 0.0
+        if "short_forager_score_weights_volatility" in new_bounds:
+            self.short_forager_score_weights_volatility_0 = new_bounds["short_forager_score_weights_volatility"][0]
+            self.short_forager_score_weights_volatility_1 = new_bounds["short_forager_score_weights_volatility"][1]
+            self.short_forager_score_weights_volatility_step = new_bounds["short_forager_score_weights_volatility"][2] if len(new_bounds["short_forager_score_weights_volatility"]) >= 3 else 0.0
+        if "short_forager_score_weights_volume" in new_bounds:
+            self.short_forager_score_weights_volume_0 = new_bounds["short_forager_score_weights_volume"][0]
+            self.short_forager_score_weights_volume_1 = new_bounds["short_forager_score_weights_volume"][1]
+            self.short_forager_score_weights_volume_step = new_bounds["short_forager_score_weights_volume"][2] if len(new_bounds["short_forager_score_weights_volume"]) >= 3 else 0.0
+        if "short_forager_volatility_ema_span" in new_bounds:
+            self.short_forager_volatility_ema_span_0 = new_bounds["short_forager_volatility_ema_span"][0]
+            self.short_forager_volatility_ema_span_1 = new_bounds["short_forager_volatility_ema_span"][1]
+            self.short_forager_volatility_ema_span_step = new_bounds["short_forager_volatility_ema_span"][2] if len(new_bounds["short_forager_volatility_ema_span"]) >= 3 else 0.0
+        if "short_forager_volume_drop_pct" in new_bounds:
+            self.short_forager_volume_drop_pct_0 = new_bounds["short_forager_volume_drop_pct"][0]
+            self.short_forager_volume_drop_pct_1 = new_bounds["short_forager_volume_drop_pct"][1]
+            self.short_forager_volume_drop_pct_step = new_bounds["short_forager_volume_drop_pct"][2] if len(new_bounds["short_forager_volume_drop_pct"]) >= 3 else 0.0
+        if "short_forager_volume_ema_span" in new_bounds:
+            self.short_forager_volume_ema_span_0 = new_bounds["short_forager_volume_ema_span"][0]
+            self.short_forager_volume_ema_span_1 = new_bounds["short_forager_volume_ema_span"][1]
+            self.short_forager_volume_ema_span_step = new_bounds["short_forager_volume_ema_span"][2] if len(new_bounds["short_forager_volume_ema_span"]) >= 3 else 0.0
+        if "short_hsl_cooldown_minutes_after_red" in new_bounds:
+            self.short_hsl_cooldown_minutes_after_red_0 = new_bounds["short_hsl_cooldown_minutes_after_red"][0]
+            self.short_hsl_cooldown_minutes_after_red_1 = new_bounds["short_hsl_cooldown_minutes_after_red"][1]
+            self.short_hsl_cooldown_minutes_after_red_step = new_bounds["short_hsl_cooldown_minutes_after_red"][2] if len(new_bounds["short_hsl_cooldown_minutes_after_red"]) >= 3 else 0.0
+        if "short_hsl_ema_span_minutes" in new_bounds:
+            self.short_hsl_ema_span_minutes_0 = new_bounds["short_hsl_ema_span_minutes"][0]
+            self.short_hsl_ema_span_minutes_1 = new_bounds["short_hsl_ema_span_minutes"][1]
+            self.short_hsl_ema_span_minutes_step = new_bounds["short_hsl_ema_span_minutes"][2] if len(new_bounds["short_hsl_ema_span_minutes"]) >= 3 else 0.0
+        if "short_hsl_red_threshold" in new_bounds:
+            self.short_hsl_red_threshold_0 = new_bounds["short_hsl_red_threshold"][0]
+            self.short_hsl_red_threshold_1 = new_bounds["short_hsl_red_threshold"][1]
+            self.short_hsl_red_threshold_step = new_bounds["short_hsl_red_threshold"][2] if len(new_bounds["short_hsl_red_threshold"]) >= 3 else 0.0
         # Fix for old configs
         elif "short_filter_relative_volume_clip_pct" in new_bounds:
             self.short_filter_volume_drop_pct_0 = new_bounds["short_filter_relative_volume_clip_pct"][0]
@@ -4706,6 +5120,9 @@ class Bounds:
                 self.short_filter_volume_ema_span_step = new_bounds["short_filter_volume_ema_span"][2]
             else:
                 self.short_filter_volume_ema_span_step = 0.0
+            self.short_forager_volume_ema_span_0 = self.short_filter_volume_ema_span_0
+            self.short_forager_volume_ema_span_1 = self.short_filter_volume_ema_span_1
+            self.short_forager_volume_ema_span_step = self.short_filter_volume_ema_span_step
         # Fix for old configs
         elif "short_filter_rolling_window" in new_bounds:
             self.short_filter_volume_ema_span_0 = new_bounds["short_filter_rolling_window"][0]
@@ -4965,6 +5382,60 @@ class Bounds:
     @property
     def long_filter_volume_ema_span_step(self): return self._long_filter_volume_ema_span_step
     @property
+    def long_forager_score_weights_ema_readiness_0(self): return self._long_forager_score_weights_ema_readiness_0
+    @property
+    def long_forager_score_weights_ema_readiness_1(self): return self._long_forager_score_weights_ema_readiness_1
+    @property
+    def long_forager_score_weights_ema_readiness_step(self): return self._long_forager_score_weights_ema_readiness_step
+    @property
+    def long_forager_score_weights_volatility_0(self): return self._long_forager_score_weights_volatility_0
+    @property
+    def long_forager_score_weights_volatility_1(self): return self._long_forager_score_weights_volatility_1
+    @property
+    def long_forager_score_weights_volatility_step(self): return self._long_forager_score_weights_volatility_step
+    @property
+    def long_forager_score_weights_volume_0(self): return self._long_forager_score_weights_volume_0
+    @property
+    def long_forager_score_weights_volume_1(self): return self._long_forager_score_weights_volume_1
+    @property
+    def long_forager_score_weights_volume_step(self): return self._long_forager_score_weights_volume_step
+    @property
+    def long_forager_volatility_ema_span_0(self): return self._long_filter_volatility_ema_span_0
+    @property
+    def long_forager_volatility_ema_span_1(self): return self._long_filter_volatility_ema_span_1
+    @property
+    def long_forager_volatility_ema_span_step(self): return self._long_filter_volatility_ema_span_step
+    @property
+    def long_forager_volume_drop_pct_0(self): return self._long_filter_volume_drop_pct_0
+    @property
+    def long_forager_volume_drop_pct_1(self): return self._long_filter_volume_drop_pct_1
+    @property
+    def long_forager_volume_drop_pct_step(self): return self._long_filter_volume_drop_pct_step
+    @property
+    def long_forager_volume_ema_span_0(self): return self._long_filter_volume_ema_span_0
+    @property
+    def long_forager_volume_ema_span_1(self): return self._long_filter_volume_ema_span_1
+    @property
+    def long_forager_volume_ema_span_step(self): return self._long_filter_volume_ema_span_step
+    @property
+    def long_hsl_cooldown_minutes_after_red_0(self): return self._long_hsl_cooldown_minutes_after_red_0
+    @property
+    def long_hsl_cooldown_minutes_after_red_1(self): return self._long_hsl_cooldown_minutes_after_red_1
+    @property
+    def long_hsl_cooldown_minutes_after_red_step(self): return self._long_hsl_cooldown_minutes_after_red_step
+    @property
+    def long_hsl_ema_span_minutes_0(self): return self._long_hsl_ema_span_minutes_0
+    @property
+    def long_hsl_ema_span_minutes_1(self): return self._long_hsl_ema_span_minutes_1
+    @property
+    def long_hsl_ema_span_minutes_step(self): return self._long_hsl_ema_span_minutes_step
+    @property
+    def long_hsl_red_threshold_0(self): return self._long_hsl_red_threshold_0
+    @property
+    def long_hsl_red_threshold_1(self): return self._long_hsl_red_threshold_1
+    @property
+    def long_hsl_red_threshold_step(self): return self._long_hsl_red_threshold_step
+    @property
     def long_n_positions_0(self): return self._long_n_positions_0
     @property
     def long_n_positions_1(self): return self._long_n_positions_1
@@ -5188,6 +5659,60 @@ class Bounds:
     def short_filter_volume_ema_span_1(self): return self._short_filter_volume_ema_span_1
     @property
     def short_filter_volume_ema_span_step(self): return self._short_filter_volume_ema_span_step
+    @property
+    def short_forager_score_weights_ema_readiness_0(self): return self._short_forager_score_weights_ema_readiness_0
+    @property
+    def short_forager_score_weights_ema_readiness_1(self): return self._short_forager_score_weights_ema_readiness_1
+    @property
+    def short_forager_score_weights_ema_readiness_step(self): return self._short_forager_score_weights_ema_readiness_step
+    @property
+    def short_forager_score_weights_volatility_0(self): return self._short_forager_score_weights_volatility_0
+    @property
+    def short_forager_score_weights_volatility_1(self): return self._short_forager_score_weights_volatility_1
+    @property
+    def short_forager_score_weights_volatility_step(self): return self._short_forager_score_weights_volatility_step
+    @property
+    def short_forager_score_weights_volume_0(self): return self._short_forager_score_weights_volume_0
+    @property
+    def short_forager_score_weights_volume_1(self): return self._short_forager_score_weights_volume_1
+    @property
+    def short_forager_score_weights_volume_step(self): return self._short_forager_score_weights_volume_step
+    @property
+    def short_forager_volatility_ema_span_0(self): return self._short_filter_volatility_ema_span_0
+    @property
+    def short_forager_volatility_ema_span_1(self): return self._short_filter_volatility_ema_span_1
+    @property
+    def short_forager_volatility_ema_span_step(self): return self._short_filter_volatility_ema_span_step
+    @property
+    def short_forager_volume_drop_pct_0(self): return self._short_filter_volume_drop_pct_0
+    @property
+    def short_forager_volume_drop_pct_1(self): return self._short_filter_volume_drop_pct_1
+    @property
+    def short_forager_volume_drop_pct_step(self): return self._short_filter_volume_drop_pct_step
+    @property
+    def short_forager_volume_ema_span_0(self): return self._short_filter_volume_ema_span_0
+    @property
+    def short_forager_volume_ema_span_1(self): return self._short_filter_volume_ema_span_1
+    @property
+    def short_forager_volume_ema_span_step(self): return self._short_filter_volume_ema_span_step
+    @property
+    def short_hsl_cooldown_minutes_after_red_0(self): return self._short_hsl_cooldown_minutes_after_red_0
+    @property
+    def short_hsl_cooldown_minutes_after_red_1(self): return self._short_hsl_cooldown_minutes_after_red_1
+    @property
+    def short_hsl_cooldown_minutes_after_red_step(self): return self._short_hsl_cooldown_minutes_after_red_step
+    @property
+    def short_hsl_ema_span_minutes_0(self): return self._short_hsl_ema_span_minutes_0
+    @property
+    def short_hsl_ema_span_minutes_1(self): return self._short_hsl_ema_span_minutes_1
+    @property
+    def short_hsl_ema_span_minutes_step(self): return self._short_hsl_ema_span_minutes_step
+    @property
+    def short_hsl_red_threshold_0(self): return self._short_hsl_red_threshold_0
+    @property
+    def short_hsl_red_threshold_1(self): return self._short_hsl_red_threshold_1
+    @property
+    def short_hsl_red_threshold_step(self): return self._short_hsl_red_threshold_step
     @property
     def short_n_positions_0(self): return self._short_n_positions_0
     @property
@@ -5664,6 +6189,145 @@ class Bounds:
             self._bounds["long_filter_volume_ema_span"].append(new_value)
         else:
             self._bounds["long_filter_volume_ema_span"][2] = new_value
+        if len(self._bounds["long_forager_volume_ema_span"]) < 3:
+            self._bounds["long_forager_volume_ema_span"].append(new_value)
+        else:
+            self._bounds["long_forager_volume_ema_span"][2] = new_value
+    @long_forager_score_weights_ema_readiness_0.setter
+    def long_forager_score_weights_ema_readiness_0(self, new_value):
+        self._long_forager_score_weights_ema_readiness_0 = new_value
+        self._bounds["long_forager_score_weights_ema_readiness"][0] = new_value
+    @long_forager_score_weights_ema_readiness_1.setter
+    def long_forager_score_weights_ema_readiness_1(self, new_value):
+        self._long_forager_score_weights_ema_readiness_1 = new_value
+        self._bounds["long_forager_score_weights_ema_readiness"][1] = new_value
+    @long_forager_score_weights_ema_readiness_step.setter
+    def long_forager_score_weights_ema_readiness_step(self, new_value):
+        self._long_forager_score_weights_ema_readiness_step = new_value
+        if len(self._bounds["long_forager_score_weights_ema_readiness"]) < 3:
+            self._bounds["long_forager_score_weights_ema_readiness"].append(new_value)
+        else:
+            self._bounds["long_forager_score_weights_ema_readiness"][2] = new_value
+    @long_forager_score_weights_volatility_0.setter
+    def long_forager_score_weights_volatility_0(self, new_value):
+        self._long_forager_score_weights_volatility_0 = new_value
+        self._bounds["long_forager_score_weights_volatility"][0] = new_value
+    @long_forager_score_weights_volatility_1.setter
+    def long_forager_score_weights_volatility_1(self, new_value):
+        self._long_forager_score_weights_volatility_1 = new_value
+        self._bounds["long_forager_score_weights_volatility"][1] = new_value
+    @long_forager_score_weights_volatility_step.setter
+    def long_forager_score_weights_volatility_step(self, new_value):
+        self._long_forager_score_weights_volatility_step = new_value
+        if len(self._bounds["long_forager_score_weights_volatility"]) < 3:
+            self._bounds["long_forager_score_weights_volatility"].append(new_value)
+        else:
+            self._bounds["long_forager_score_weights_volatility"][2] = new_value
+    @long_forager_score_weights_volume_0.setter
+    def long_forager_score_weights_volume_0(self, new_value):
+        self._long_forager_score_weights_volume_0 = new_value
+        self._bounds["long_forager_score_weights_volume"][0] = new_value
+    @long_forager_score_weights_volume_1.setter
+    def long_forager_score_weights_volume_1(self, new_value):
+        self._long_forager_score_weights_volume_1 = new_value
+        self._bounds["long_forager_score_weights_volume"][1] = new_value
+    @long_forager_score_weights_volume_step.setter
+    def long_forager_score_weights_volume_step(self, new_value):
+        self._long_forager_score_weights_volume_step = new_value
+        if len(self._bounds["long_forager_score_weights_volume"]) < 3:
+            self._bounds["long_forager_score_weights_volume"].append(new_value)
+        else:
+            self._bounds["long_forager_score_weights_volume"][2] = new_value
+    @long_forager_volatility_ema_span_0.setter
+    def long_forager_volatility_ema_span_0(self, new_value):
+        self.long_filter_volatility_ema_span_0 = new_value
+        self._bounds["long_forager_volatility_ema_span"][0] = new_value
+    @long_forager_volatility_ema_span_1.setter
+    def long_forager_volatility_ema_span_1(self, new_value):
+        self.long_filter_volatility_ema_span_1 = new_value
+        self._bounds["long_forager_volatility_ema_span"][1] = new_value
+    @long_forager_volatility_ema_span_step.setter
+    def long_forager_volatility_ema_span_step(self, new_value):
+        self.long_filter_volatility_ema_span_step = new_value
+        if len(self._bounds["long_forager_volatility_ema_span"]) < 3:
+            self._bounds["long_forager_volatility_ema_span"].append(new_value)
+        else:
+            self._bounds["long_forager_volatility_ema_span"][2] = new_value
+    @long_forager_volume_drop_pct_0.setter
+    def long_forager_volume_drop_pct_0(self, new_value):
+        self.long_filter_volume_drop_pct_0 = new_value
+        self._bounds["long_forager_volume_drop_pct"][0] = new_value
+    @long_forager_volume_drop_pct_1.setter
+    def long_forager_volume_drop_pct_1(self, new_value):
+        self.long_filter_volume_drop_pct_1 = new_value
+        self._bounds["long_forager_volume_drop_pct"][1] = new_value
+    @long_forager_volume_drop_pct_step.setter
+    def long_forager_volume_drop_pct_step(self, new_value):
+        self.long_filter_volume_drop_pct_step = new_value
+        if len(self._bounds["long_forager_volume_drop_pct"]) < 3:
+            self._bounds["long_forager_volume_drop_pct"].append(new_value)
+        else:
+            self._bounds["long_forager_volume_drop_pct"][2] = new_value
+    @long_forager_volume_ema_span_0.setter
+    def long_forager_volume_ema_span_0(self, new_value):
+        self.long_filter_volume_ema_span_0 = new_value
+        self._bounds["long_forager_volume_ema_span"][0] = new_value
+    @long_forager_volume_ema_span_1.setter
+    def long_forager_volume_ema_span_1(self, new_value):
+        self.long_filter_volume_ema_span_1 = new_value
+        self._bounds["long_forager_volume_ema_span"][1] = new_value
+    @long_forager_volume_ema_span_step.setter
+    def long_forager_volume_ema_span_step(self, new_value):
+        self.long_filter_volume_ema_span_step = new_value
+        if len(self._bounds["long_forager_volume_ema_span"]) < 3:
+            self._bounds["long_forager_volume_ema_span"].append(new_value)
+        else:
+            self._bounds["long_forager_volume_ema_span"][2] = new_value
+    @long_hsl_cooldown_minutes_after_red_0.setter
+    def long_hsl_cooldown_minutes_after_red_0(self, new_value):
+        self._long_hsl_cooldown_minutes_after_red_0 = new_value
+        self._bounds["long_hsl_cooldown_minutes_after_red"][0] = new_value
+    @long_hsl_cooldown_minutes_after_red_1.setter
+    def long_hsl_cooldown_minutes_after_red_1(self, new_value):
+        self._long_hsl_cooldown_minutes_after_red_1 = new_value
+        self._bounds["long_hsl_cooldown_minutes_after_red"][1] = new_value
+    @long_hsl_cooldown_minutes_after_red_step.setter
+    def long_hsl_cooldown_minutes_after_red_step(self, new_value):
+        self._long_hsl_cooldown_minutes_after_red_step = new_value
+        if len(self._bounds["long_hsl_cooldown_minutes_after_red"]) < 3:
+            self._bounds["long_hsl_cooldown_minutes_after_red"].append(new_value)
+        else:
+            self._bounds["long_hsl_cooldown_minutes_after_red"][2] = new_value
+    @long_hsl_ema_span_minutes_0.setter
+    def long_hsl_ema_span_minutes_0(self, new_value):
+        self._long_hsl_ema_span_minutes_0 = new_value
+        self._bounds["long_hsl_ema_span_minutes"][0] = new_value
+    @long_hsl_ema_span_minutes_1.setter
+    def long_hsl_ema_span_minutes_1(self, new_value):
+        self._long_hsl_ema_span_minutes_1 = new_value
+        self._bounds["long_hsl_ema_span_minutes"][1] = new_value
+    @long_hsl_ema_span_minutes_step.setter
+    def long_hsl_ema_span_minutes_step(self, new_value):
+        self._long_hsl_ema_span_minutes_step = new_value
+        if len(self._bounds["long_hsl_ema_span_minutes"]) < 3:
+            self._bounds["long_hsl_ema_span_minutes"].append(new_value)
+        else:
+            self._bounds["long_hsl_ema_span_minutes"][2] = new_value
+    @long_hsl_red_threshold_0.setter
+    def long_hsl_red_threshold_0(self, new_value):
+        self._long_hsl_red_threshold_0 = new_value
+        self._bounds["long_hsl_red_threshold"][0] = new_value
+    @long_hsl_red_threshold_1.setter
+    def long_hsl_red_threshold_1(self, new_value):
+        self._long_hsl_red_threshold_1 = new_value
+        self._bounds["long_hsl_red_threshold"][1] = new_value
+    @long_hsl_red_threshold_step.setter
+    def long_hsl_red_threshold_step(self, new_value):
+        self._long_hsl_red_threshold_step = new_value
+        if len(self._bounds["long_hsl_red_threshold"]) < 3:
+            self._bounds["long_hsl_red_threshold"].append(new_value)
+        else:
+            self._bounds["long_hsl_red_threshold"][2] = new_value
     @long_n_positions_0.setter
     def long_n_positions_0(self, new_value):
         self._long_n_positions_0 = new_value
@@ -6221,6 +6885,145 @@ class Bounds:
             self._bounds["short_filter_volume_ema_span"].append(new_value)
         else:
             self._bounds["short_filter_volume_ema_span"][2] = new_value
+        if len(self._bounds["short_forager_volume_ema_span"]) < 3:
+            self._bounds["short_forager_volume_ema_span"].append(new_value)
+        else:
+            self._bounds["short_forager_volume_ema_span"][2] = new_value
+    @short_forager_score_weights_ema_readiness_0.setter
+    def short_forager_score_weights_ema_readiness_0(self, new_value):
+        self._short_forager_score_weights_ema_readiness_0 = new_value
+        self._bounds["short_forager_score_weights_ema_readiness"][0] = new_value
+    @short_forager_score_weights_ema_readiness_1.setter
+    def short_forager_score_weights_ema_readiness_1(self, new_value):
+        self._short_forager_score_weights_ema_readiness_1 = new_value
+        self._bounds["short_forager_score_weights_ema_readiness"][1] = new_value
+    @short_forager_score_weights_ema_readiness_step.setter
+    def short_forager_score_weights_ema_readiness_step(self, new_value):
+        self._short_forager_score_weights_ema_readiness_step = new_value
+        if len(self._bounds["short_forager_score_weights_ema_readiness"]) < 3:
+            self._bounds["short_forager_score_weights_ema_readiness"].append(new_value)
+        else:
+            self._bounds["short_forager_score_weights_ema_readiness"][2] = new_value
+    @short_forager_score_weights_volatility_0.setter
+    def short_forager_score_weights_volatility_0(self, new_value):
+        self._short_forager_score_weights_volatility_0 = new_value
+        self._bounds["short_forager_score_weights_volatility"][0] = new_value
+    @short_forager_score_weights_volatility_1.setter
+    def short_forager_score_weights_volatility_1(self, new_value):
+        self._short_forager_score_weights_volatility_1 = new_value
+        self._bounds["short_forager_score_weights_volatility"][1] = new_value
+    @short_forager_score_weights_volatility_step.setter
+    def short_forager_score_weights_volatility_step(self, new_value):
+        self._short_forager_score_weights_volatility_step = new_value
+        if len(self._bounds["short_forager_score_weights_volatility"]) < 3:
+            self._bounds["short_forager_score_weights_volatility"].append(new_value)
+        else:
+            self._bounds["short_forager_score_weights_volatility"][2] = new_value
+    @short_forager_score_weights_volume_0.setter
+    def short_forager_score_weights_volume_0(self, new_value):
+        self._short_forager_score_weights_volume_0 = new_value
+        self._bounds["short_forager_score_weights_volume"][0] = new_value
+    @short_forager_score_weights_volume_1.setter
+    def short_forager_score_weights_volume_1(self, new_value):
+        self._short_forager_score_weights_volume_1 = new_value
+        self._bounds["short_forager_score_weights_volume"][1] = new_value
+    @short_forager_score_weights_volume_step.setter
+    def short_forager_score_weights_volume_step(self, new_value):
+        self._short_forager_score_weights_volume_step = new_value
+        if len(self._bounds["short_forager_score_weights_volume"]) < 3:
+            self._bounds["short_forager_score_weights_volume"].append(new_value)
+        else:
+            self._bounds["short_forager_score_weights_volume"][2] = new_value
+    @short_forager_volatility_ema_span_0.setter
+    def short_forager_volatility_ema_span_0(self, new_value):
+        self.short_filter_volatility_ema_span_0 = new_value
+        self._bounds["short_forager_volatility_ema_span"][0] = new_value
+    @short_forager_volatility_ema_span_1.setter
+    def short_forager_volatility_ema_span_1(self, new_value):
+        self.short_filter_volatility_ema_span_1 = new_value
+        self._bounds["short_forager_volatility_ema_span"][1] = new_value
+    @short_forager_volatility_ema_span_step.setter
+    def short_forager_volatility_ema_span_step(self, new_value):
+        self.short_filter_volatility_ema_span_step = new_value
+        if len(self._bounds["short_forager_volatility_ema_span"]) < 3:
+            self._bounds["short_forager_volatility_ema_span"].append(new_value)
+        else:
+            self._bounds["short_forager_volatility_ema_span"][2] = new_value
+    @short_forager_volume_drop_pct_0.setter
+    def short_forager_volume_drop_pct_0(self, new_value):
+        self.short_filter_volume_drop_pct_0 = new_value
+        self._bounds["short_forager_volume_drop_pct"][0] = new_value
+    @short_forager_volume_drop_pct_1.setter
+    def short_forager_volume_drop_pct_1(self, new_value):
+        self.short_filter_volume_drop_pct_1 = new_value
+        self._bounds["short_forager_volume_drop_pct"][1] = new_value
+    @short_forager_volume_drop_pct_step.setter
+    def short_forager_volume_drop_pct_step(self, new_value):
+        self.short_filter_volume_drop_pct_step = new_value
+        if len(self._bounds["short_forager_volume_drop_pct"]) < 3:
+            self._bounds["short_forager_volume_drop_pct"].append(new_value)
+        else:
+            self._bounds["short_forager_volume_drop_pct"][2] = new_value
+    @short_forager_volume_ema_span_0.setter
+    def short_forager_volume_ema_span_0(self, new_value):
+        self.short_filter_volume_ema_span_0 = new_value
+        self._bounds["short_forager_volume_ema_span"][0] = new_value
+    @short_forager_volume_ema_span_1.setter
+    def short_forager_volume_ema_span_1(self, new_value):
+        self.short_filter_volume_ema_span_1 = new_value
+        self._bounds["short_forager_volume_ema_span"][1] = new_value
+    @short_forager_volume_ema_span_step.setter
+    def short_forager_volume_ema_span_step(self, new_value):
+        self.short_filter_volume_ema_span_step = new_value
+        if len(self._bounds["short_forager_volume_ema_span"]) < 3:
+            self._bounds["short_forager_volume_ema_span"].append(new_value)
+        else:
+            self._bounds["short_forager_volume_ema_span"][2] = new_value
+    @short_hsl_cooldown_minutes_after_red_0.setter
+    def short_hsl_cooldown_minutes_after_red_0(self, new_value):
+        self._short_hsl_cooldown_minutes_after_red_0 = new_value
+        self._bounds["short_hsl_cooldown_minutes_after_red"][0] = new_value
+    @short_hsl_cooldown_minutes_after_red_1.setter
+    def short_hsl_cooldown_minutes_after_red_1(self, new_value):
+        self._short_hsl_cooldown_minutes_after_red_1 = new_value
+        self._bounds["short_hsl_cooldown_minutes_after_red"][1] = new_value
+    @short_hsl_cooldown_minutes_after_red_step.setter
+    def short_hsl_cooldown_minutes_after_red_step(self, new_value):
+        self._short_hsl_cooldown_minutes_after_red_step = new_value
+        if len(self._bounds["short_hsl_cooldown_minutes_after_red"]) < 3:
+            self._bounds["short_hsl_cooldown_minutes_after_red"].append(new_value)
+        else:
+            self._bounds["short_hsl_cooldown_minutes_after_red"][2] = new_value
+    @short_hsl_ema_span_minutes_0.setter
+    def short_hsl_ema_span_minutes_0(self, new_value):
+        self._short_hsl_ema_span_minutes_0 = new_value
+        self._bounds["short_hsl_ema_span_minutes"][0] = new_value
+    @short_hsl_ema_span_minutes_1.setter
+    def short_hsl_ema_span_minutes_1(self, new_value):
+        self._short_hsl_ema_span_minutes_1 = new_value
+        self._bounds["short_hsl_ema_span_minutes"][1] = new_value
+    @short_hsl_ema_span_minutes_step.setter
+    def short_hsl_ema_span_minutes_step(self, new_value):
+        self._short_hsl_ema_span_minutes_step = new_value
+        if len(self._bounds["short_hsl_ema_span_minutes"]) < 3:
+            self._bounds["short_hsl_ema_span_minutes"].append(new_value)
+        else:
+            self._bounds["short_hsl_ema_span_minutes"][2] = new_value
+    @short_hsl_red_threshold_0.setter
+    def short_hsl_red_threshold_0(self, new_value):
+        self._short_hsl_red_threshold_0 = new_value
+        self._bounds["short_hsl_red_threshold"][0] = new_value
+    @short_hsl_red_threshold_1.setter
+    def short_hsl_red_threshold_1(self, new_value):
+        self._short_hsl_red_threshold_1 = new_value
+        self._bounds["short_hsl_red_threshold"][1] = new_value
+    @short_hsl_red_threshold_step.setter
+    def short_hsl_red_threshold_step(self, new_value):
+        self._short_hsl_red_threshold_step = new_value
+        if len(self._bounds["short_hsl_red_threshold"]) < 3:
+            self._bounds["short_hsl_red_threshold"].append(new_value)
+        else:
+            self._bounds["short_hsl_red_threshold"][2] = new_value
     @short_n_positions_0.setter
     def short_n_positions_0(self, new_value):
         self._short_n_positions_0 = new_value

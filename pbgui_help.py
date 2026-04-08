@@ -708,6 +708,51 @@ hedge_mode = """
     Note: effective hedge_mode also depends on exchange capability.
     ```"""
 
+margin_mode_preference = """
+    ```
+    Preferred live margin mode when a symbol supports both cross and isolated.
+    Typical values: cross, isolated, auto, auto_cross, auto_isolated.
+    ```"""
+
+hsl_signal_mode = """
+    ```
+    Select whether HSL drawdown is tracked per-side (pside) or from one unified
+    account-level strategy signal (unified).
+    ```"""
+
+hsl_position_during_cooldown_policy = """
+    ```
+    Live policy for a position that appears on a halted side during HSL RED cooldown.
+    Common values: panic, normal, manual, tp_only, graceful_stop.
+    ```"""
+
+hsl_enabled = """
+    ```
+    Enable side-specific equity hard stop loss runtime for this side.
+    ```"""
+
+hsl_no_restart_drawdown_threshold = """
+    ```
+    Terminal HSL threshold. If reached after a RED event, the side will not auto-restart.
+    Must satisfy hsl_red_threshold <= value <= 1.0.
+    ```"""
+
+hsl_orange_tier_mode = """
+    ```
+    Behavior to apply while the side is in the HSL orange tier.
+    ```"""
+
+hsl_panic_close_order_type = """
+    ```
+    Order type used for HSL RED panic close execution or simulation.
+    ```"""
+
+hsl_tier_ratios = """
+    ```
+    Multipliers used to derive yellow and orange HSL thresholds from hsl_red_threshold.
+    Must satisfy 0 < yellow < orange < 1.
+    ```"""
+
 TWE_long_short = """
     ```
     total wallet exposure limits long and short.
@@ -1264,6 +1309,29 @@ filter_volatility_drop_pct = """
     In forager mode, the bot selects coins with the highest log-range values for opening positions.
     ```"""
 
+forager_score_weights = """
+    ```
+    Relative weights for forager coin ranking.
+    ema_readiness favors symbols with enough candle history,
+    volatility favors noisier symbols,
+    and volume favors stronger relative volume.
+    ```"""
+
+hsl_cooldown_minutes_after_red = """
+    ```
+    Cooldown period after an HSL red event before normal trading resumes on that side.
+    ```"""
+
+hsl_ema_span_minutes = """
+    ```
+    EMA span in minutes used by HSL state detection on that side.
+    ```"""
+
+hsl_red_threshold = """
+    ```
+    Threshold that triggers the HSL red state on that side.
+    ```"""
+
 # filter_relative_volume_clip_pct = """
 #     ```
 #     Coins selected for trading are filtered by volume and noisiness.
@@ -1489,6 +1557,13 @@ market_orders_allowed = """
     market price. If false, will only place limit orders. Default is true.
     ```"""
 
+market_order_near_touch_threshold = """
+    ```
+    Distance threshold used when market_orders_allowed is enabled.
+    If an order price is within this fractional distance of market price,
+    PB7 may emit it as a market order. Default: 0.001.
+    ```"""
+
 mimic_backtest_1m_delay = """
     ```
     If true, the bot will only update and evaluate open orders once per full minute, synchronized to the clock (e.g., 12:01:00, 12:02:00, etc.).
@@ -1578,6 +1653,19 @@ maker_fee_override = """
     ```
     Optional maker fee override (part-per-one; use 0.0002 for 0.02%).
     Set to -1 to use exchange-derived maker fees.
+    ```"""
+
+liquidation_threshold = """
+    ```
+    Early-stop backtest equity floor. The run is marked liquidated once total
+    equity falls to or below starting_balance * liquidation_threshold.
+    Must satisfy 0.0 <= x < 1.0. Default: 0.05.
+    ```"""
+
+market_order_slippage_pct = """
+    ```
+    Backtest-only slippage applied whenever simulated execution uses a market order.
+    Default: 0.0005 (5 bps).
     ```"""
 
 ohlcv_source_dir = """

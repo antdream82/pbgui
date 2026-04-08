@@ -1456,6 +1456,74 @@ class OptimizeV7Item(ConfigV7Editor):
             st.session_state.edit_opt_v7_hedge_mode = self.config.live.hedge_mode
         st.checkbox("hedge_mode", key="edit_opt_v7_hedge_mode", help=pbgui_help.hedge_mode)
 
+    @st.fragment
+    def fragment_liquidation_threshold(self):
+        key = "edit_opt_v7_liquidation_threshold"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.backtest.liquidation_threshold:
+                self.config.backtest.liquidation_threshold = st.session_state[key]
+        else:
+            st.session_state[key] = float(self.config.backtest.liquidation_threshold)
+        st.number_input("liquidation_threshold", min_value=0.0, max_value=0.999999, step=0.01, key=key, help=pbgui_help.liquidation_threshold)
+
+    @st.fragment
+    def fragment_market_order_slippage_pct(self):
+        key = "edit_opt_v7_market_order_slippage_pct"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.backtest.market_order_slippage_pct:
+                self.config.backtest.market_order_slippage_pct = st.session_state[key]
+        else:
+            st.session_state[key] = float(self.config.backtest.market_order_slippage_pct)
+        st.number_input("market_order_slippage_pct", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_slippage_pct)
+
+    @st.fragment
+    def fragment_market_order_near_touch_threshold(self):
+        key = "edit_opt_v7_market_order_near_touch_threshold"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.market_order_near_touch_threshold:
+                self.config.live.market_order_near_touch_threshold = st.session_state[key]
+        else:
+            st.session_state[key] = float(self.config.live.market_order_near_touch_threshold)
+        st.number_input("market_order_near_touch_threshold", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_near_touch_threshold)
+
+    @st.fragment
+    def fragment_margin_mode_preference(self):
+        key = "edit_opt_v7_margin_mode_preference"
+        options = ["cross", "isolated", "auto", "auto_cross", "auto_isolated"]
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.margin_mode_preference:
+                self.config.live.margin_mode_preference = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.live.margin_mode_preference
+        st.selectbox("margin_mode_preference", options, key=key, help=pbgui_help.margin_mode_preference)
+
+    @st.fragment
+    def fragment_hsl_signal_mode(self):
+        key = "edit_opt_v7_hsl_signal_mode"
+        options = ["pside", "unified"]
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.hsl_signal_mode:
+                self.config.live.hsl_signal_mode = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.live.hsl_signal_mode
+        st.selectbox("hsl_signal_mode", options, key=key, help=pbgui_help.hsl_signal_mode)
+
+    @st.fragment
+    def fragment_hsl_position_during_cooldown_policy(self):
+        key = "edit_opt_v7_hsl_position_during_cooldown_policy"
+        options = ["panic", "normal", "manual", "tp_only", "graceful_stop"]
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.hsl_position_during_cooldown_policy:
+                self.config.live.hsl_position_during_cooldown_policy = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.live.hsl_position_during_cooldown_policy
+        st.selectbox(
+            "hsl_position_during_cooldown_policy",
+            options,
+            key=key,
+            help=pbgui_help.hsl_position_during_cooldown_policy,
+        )
+
     # starting_balance
     @st.fragment
     def fragment_starting_balance(self):
@@ -3291,6 +3359,89 @@ class OptimizeV7Item(ConfigV7Editor):
                 format=step_format,
                 key="edit_opt_v7_long_filter_volume_drop_pct_step",
                 help=f"Step size for long_filter_volume_drop_pct (0 disables; min {min_step_display}))")
+
+    def _render_bound_fragment(self, bound_name: str, label: str, min_value, max_value, step, fmt, widget_step, round_digits: int, help_text=None):
+        min_step = self._min_positive_step()
+        step_format = self._step_format_from_min(round_digits, min_step, widget_step)
+        min_step_display = (step_format % min_step) if min_step else "0"
+        range_key = f"edit_opt_v7_{bound_name}"
+        step_key = f"{range_key}_step"
+        value_0 = getattr(self.config.optimize.bounds, f"{bound_name}_0")
+        value_1 = getattr(self.config.optimize.bounds, f"{bound_name}_1")
+        current_step = getattr(self.config.optimize.bounds, f"{bound_name}_step")
+
+        if range_key in st.session_state:
+            if st.session_state[range_key] != (value_0, value_1):
+                setattr(self.config.optimize.bounds, f"{bound_name}_0", st.session_state[range_key][0])
+                setattr(self.config.optimize.bounds, f"{bound_name}_1", st.session_state[range_key][1])
+        else:
+            st.session_state[range_key] = (value_0, value_1)
+
+        if step_key in st.session_state:
+            clamped = self._clamp_step_value(st.session_state[step_key], min_step)
+            if clamped != st.session_state[step_key]:
+                st.session_state[step_key] = clamped
+            if clamped != current_step:
+                setattr(self.config.optimize.bounds, f"{bound_name}_step", clamped)
+        else:
+            st.session_state[step_key] = current_step
+
+        col_slider, col_step = st.columns([5, 1])
+        with col_slider:
+            st.slider(
+                label,
+                min_value=min_value,
+                max_value=max_value,
+                step=step,
+                format=fmt,
+                key=range_key,
+                help=help_text,
+            )
+        with col_step:
+            st.number_input(
+                "step",
+                min_value=0.0,
+                step=widget_step,
+                format=step_format,
+                key=step_key,
+                help=f"Step size for {label} (0 disables; min {min_step_display})",
+            )
+
+    @st.fragment
+    def fragment_long_forager_score_weights_ema_readiness(self):
+        self._render_bound_fragment("long_forager_score_weights_ema_readiness", "long_forager_score_weights_ema_readiness", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
+
+    @st.fragment
+    def fragment_long_forager_score_weights_volatility(self):
+        self._render_bound_fragment("long_forager_score_weights_volatility", "long_forager_score_weights_volatility", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
+
+    @st.fragment
+    def fragment_long_forager_score_weights_volume(self):
+        self._render_bound_fragment("long_forager_score_weights_volume", "long_forager_score_weights_volume", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
+
+    @st.fragment
+    def fragment_long_forager_volatility_ema_span(self):
+        self._render_bound_fragment("long_forager_volatility_ema_span", "long_forager_volatility_ema_span", Bounds.FILTER_VOLATILITY_EMA_SPAN_MIN, Bounds.FILTER_VOLATILITY_EMA_SPAN_MAX, Bounds.FILTER_VOLATILITY_EMA_SPAN_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_FORMAT, Bounds.FILTER_VOLATILITY_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
+
+    @st.fragment
+    def fragment_long_forager_volume_drop_pct(self):
+        self._render_bound_fragment("long_forager_volume_drop_pct", "long_forager_volume_drop_pct", Bounds.FILTER_VOLUME_DROP_PCT_MIN, Bounds.FILTER_VOLUME_DROP_PCT_MAX, Bounds.FILTER_VOLUME_DROP_PCT_STEP, Bounds.FILTER_VOLUME_DROP_PCT_FORMAT, Bounds.FILTER_VOLUME_DROP_PCT_WIDGET_STEP, Bounds.FILTER_VOLUME_DROP_PCT_ROUND, pbgui_help.filter_volume_drop_pct)
+
+    @st.fragment
+    def fragment_long_forager_volume_ema_span(self):
+        self._render_bound_fragment("long_forager_volume_ema_span", "long_forager_volume_ema_span", Bounds.FILTER_VOLUME_EMA_SPAN_MIN, Bounds.FILTER_VOLUME_EMA_SPAN_MAX, Bounds.FILTER_VOLUME_EMA_SPAN_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_FORMAT, Bounds.FILTER_VOLUME_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
+
+    @st.fragment
+    def fragment_long_hsl_cooldown_minutes_after_red(self):
+        self._render_bound_fragment("long_hsl_cooldown_minutes_after_red", "long_hsl_cooldown_minutes_after_red", Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MIN, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MAX, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_FORMAT, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_WIDGET_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND, pbgui_help.hsl_cooldown_minutes_after_red)
+
+    @st.fragment
+    def fragment_long_hsl_ema_span_minutes(self):
+        self._render_bound_fragment("long_hsl_ema_span_minutes", "long_hsl_ema_span_minutes", Bounds.HSL_EMA_SPAN_MINUTES_MIN, Bounds.HSL_EMA_SPAN_MINUTES_MAX, Bounds.HSL_EMA_SPAN_MINUTES_STEP, Bounds.HSL_EMA_SPAN_MINUTES_FORMAT, Bounds.HSL_EMA_SPAN_MINUTES_WIDGET_STEP, Bounds.HSL_EMA_SPAN_MINUTES_ROUND, pbgui_help.hsl_ema_span_minutes)
+
+    @st.fragment
+    def fragment_long_hsl_red_threshold(self):
+        self._render_bound_fragment("long_hsl_red_threshold", "long_hsl_red_threshold", Bounds.HSL_RED_THRESHOLD_MIN, Bounds.HSL_RED_THRESHOLD_MAX, Bounds.HSL_RED_THRESHOLD_STEP, Bounds.HSL_RED_THRESHOLD_FORMAT, Bounds.HSL_RED_THRESHOLD_WIDGET_STEP, Bounds.HSL_RED_THRESHOLD_ROUND, pbgui_help.hsl_red_threshold)
     
     # long_filter_volume_ema_span
     @st.fragment
@@ -4892,6 +5043,42 @@ class OptimizeV7Item(ConfigV7Editor):
                 format=step_format,
                 key="edit_opt_v7_short_filter_volume_drop_pct_step",
                 help=f"Step size for short_filter_volume_drop_pct (0 disables; min {min_step_display})")
+
+    @st.fragment
+    def fragment_short_forager_score_weights_ema_readiness(self):
+        self._render_bound_fragment("short_forager_score_weights_ema_readiness", "short_forager_score_weights_ema_readiness", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
+
+    @st.fragment
+    def fragment_short_forager_score_weights_volatility(self):
+        self._render_bound_fragment("short_forager_score_weights_volatility", "short_forager_score_weights_volatility", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
+
+    @st.fragment
+    def fragment_short_forager_score_weights_volume(self):
+        self._render_bound_fragment("short_forager_score_weights_volume", "short_forager_score_weights_volume", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
+
+    @st.fragment
+    def fragment_short_forager_volatility_ema_span(self):
+        self._render_bound_fragment("short_forager_volatility_ema_span", "short_forager_volatility_ema_span", Bounds.FILTER_VOLATILITY_EMA_SPAN_MIN, Bounds.FILTER_VOLATILITY_EMA_SPAN_MAX, Bounds.FILTER_VOLATILITY_EMA_SPAN_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_FORMAT, Bounds.FILTER_VOLATILITY_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
+
+    @st.fragment
+    def fragment_short_forager_volume_drop_pct(self):
+        self._render_bound_fragment("short_forager_volume_drop_pct", "short_forager_volume_drop_pct", Bounds.FILTER_VOLUME_DROP_PCT_MIN, Bounds.FILTER_VOLUME_DROP_PCT_MAX, Bounds.FILTER_VOLUME_DROP_PCT_STEP, Bounds.FILTER_VOLUME_DROP_PCT_FORMAT, Bounds.FILTER_VOLUME_DROP_PCT_WIDGET_STEP, Bounds.FILTER_VOLUME_DROP_PCT_ROUND, pbgui_help.filter_volume_drop_pct)
+
+    @st.fragment
+    def fragment_short_forager_volume_ema_span(self):
+        self._render_bound_fragment("short_forager_volume_ema_span", "short_forager_volume_ema_span", Bounds.FILTER_VOLUME_EMA_SPAN_MIN, Bounds.FILTER_VOLUME_EMA_SPAN_MAX, Bounds.FILTER_VOLUME_EMA_SPAN_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_FORMAT, Bounds.FILTER_VOLUME_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
+
+    @st.fragment
+    def fragment_short_hsl_cooldown_minutes_after_red(self):
+        self._render_bound_fragment("short_hsl_cooldown_minutes_after_red", "short_hsl_cooldown_minutes_after_red", Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MIN, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MAX, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_FORMAT, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_WIDGET_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND, pbgui_help.hsl_cooldown_minutes_after_red)
+
+    @st.fragment
+    def fragment_short_hsl_ema_span_minutes(self):
+        self._render_bound_fragment("short_hsl_ema_span_minutes", "short_hsl_ema_span_minutes", Bounds.HSL_EMA_SPAN_MINUTES_MIN, Bounds.HSL_EMA_SPAN_MINUTES_MAX, Bounds.HSL_EMA_SPAN_MINUTES_STEP, Bounds.HSL_EMA_SPAN_MINUTES_FORMAT, Bounds.HSL_EMA_SPAN_MINUTES_WIDGET_STEP, Bounds.HSL_EMA_SPAN_MINUTES_ROUND, pbgui_help.hsl_ema_span_minutes)
+
+    @st.fragment
+    def fragment_short_hsl_red_threshold(self):
+        self._render_bound_fragment("short_hsl_red_threshold", "short_hsl_red_threshold", Bounds.HSL_RED_THRESHOLD_MIN, Bounds.HSL_RED_THRESHOLD_MAX, Bounds.HSL_RED_THRESHOLD_STEP, Bounds.HSL_RED_THRESHOLD_FORMAT, Bounds.HSL_RED_THRESHOLD_WIDGET_STEP, Bounds.HSL_RED_THRESHOLD_ROUND, pbgui_help.hsl_red_threshold)
     # short_filter_volume_ema_span
     @st.fragment
     def fragment_short_filter_volume_ema_span(self):
@@ -6682,6 +6869,20 @@ class OptimizeV7Item(ConfigV7Editor):
             self.fragment_candle_interval_minutes()
         with col3:
             self.fragment_hedge_mode()
+        col1, col2, col3 = st.columns([1, 1, 1], vertical_alignment="bottom")
+        with col1:
+            self.fragment_liquidation_threshold()
+        with col2:
+            self.fragment_market_order_slippage_pct()
+        with col3:
+            self.fragment_market_order_near_touch_threshold()
+        col1, col2, col3 = st.columns([1, 1, 1], vertical_alignment="bottom")
+        with col1:
+            self.fragment_margin_mode_preference()
+        with col2:
+            self.fragment_hsl_signal_mode()
+        with col3:
+            self.fragment_hsl_position_during_cooldown_policy()
         
         # Coin Sources - full width for better layout consistency with scenarios
         self.fragment_coin_sources()
@@ -6748,10 +6949,15 @@ class OptimizeV7Item(ConfigV7Editor):
                 self.fragment_long_entry_trailing_threshold_volatility_weight()
                 self.fragment_long_entry_trailing_threshold_we_weight()
                 self.fragment_long_entry_volatility_ema_span_hours()
-                self.fragment_long_filter_volatility_drop_pct()
-                self.fragment_long_filter_volatility_ema_span()
-                self.fragment_long_filter_volume_drop_pct()
-                self.fragment_long_filter_volume_ema_span()
+                self.fragment_long_forager_score_weights_ema_readiness()
+                self.fragment_long_forager_score_weights_volatility()
+                self.fragment_long_forager_score_weights_volume()
+                self.fragment_long_forager_volatility_ema_span()
+                self.fragment_long_forager_volume_drop_pct()
+                self.fragment_long_forager_volume_ema_span()
+                self.fragment_long_hsl_cooldown_minutes_after_red()
+                self.fragment_long_hsl_ema_span_minutes()
+                self.fragment_long_hsl_red_threshold()
                 self.fragment_long_n_positions()
                 self.fragment_long_risk_twel_enforcer_threshold()
                 self.fragment_long_risk_we_excess_allowance_pct()
@@ -6789,10 +6995,15 @@ class OptimizeV7Item(ConfigV7Editor):
                 self.fragment_short_entry_trailing_threshold_volatility_weight()
                 self.fragment_short_entry_trailing_threshold_we_weight()
                 self.fragment_short_entry_volatility_ema_span_hours()
-                self.fragment_short_filter_volatility_drop_pct()
-                self.fragment_short_filter_volatility_ema_span()
-                self.fragment_short_filter_volume_drop_pct()
-                self.fragment_short_filter_volume_ema_span()
+                self.fragment_short_forager_score_weights_ema_readiness()
+                self.fragment_short_forager_score_weights_volatility()
+                self.fragment_short_forager_score_weights_volume()
+                self.fragment_short_forager_volatility_ema_span()
+                self.fragment_short_forager_volume_drop_pct()
+                self.fragment_short_forager_volume_ema_span()
+                self.fragment_short_hsl_cooldown_minutes_after_red()
+                self.fragment_short_hsl_ema_span_minutes()
+                self.fragment_short_hsl_red_threshold()
                 self.fragment_short_n_positions()
                 self.fragment_short_risk_twel_enforcer_threshold()
                 self.fragment_short_risk_we_excess_allowance_pct()

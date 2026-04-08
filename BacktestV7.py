@@ -781,6 +781,74 @@ class BacktestV7Item(ConfigV7Editor):
             st.session_state.edit_bt_v7_hedge_mode = self.config.live.hedge_mode
         st.checkbox("hedge_mode", key="edit_bt_v7_hedge_mode", help=pbgui_help.hedge_mode)
 
+    @st.fragment
+    def fragment_liquidation_threshold(self):
+        key = "edit_bt_v7_liquidation_threshold"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.backtest.liquidation_threshold:
+                self.config.backtest.liquidation_threshold = st.session_state[key]
+        else:
+            st.session_state[key] = float(self.config.backtest.liquidation_threshold)
+        st.number_input("liquidation_threshold", min_value=0.0, max_value=0.999999, step=0.01, key=key, help=pbgui_help.liquidation_threshold)
+
+    @st.fragment
+    def fragment_market_order_slippage_pct(self):
+        key = "edit_bt_v7_market_order_slippage_pct"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.backtest.market_order_slippage_pct:
+                self.config.backtest.market_order_slippage_pct = st.session_state[key]
+        else:
+            st.session_state[key] = float(self.config.backtest.market_order_slippage_pct)
+        st.number_input("market_order_slippage_pct", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_slippage_pct)
+
+    @st.fragment
+    def fragment_market_order_near_touch_threshold(self):
+        key = "edit_bt_v7_market_order_near_touch_threshold"
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.market_order_near_touch_threshold:
+                self.config.live.market_order_near_touch_threshold = st.session_state[key]
+        else:
+            st.session_state[key] = float(self.config.live.market_order_near_touch_threshold)
+        st.number_input("market_order_near_touch_threshold", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_near_touch_threshold)
+
+    @st.fragment
+    def fragment_margin_mode_preference(self):
+        key = "edit_bt_v7_margin_mode_preference"
+        options = ["cross", "isolated", "auto", "auto_cross", "auto_isolated"]
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.margin_mode_preference:
+                self.config.live.margin_mode_preference = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.live.margin_mode_preference
+        st.selectbox("margin_mode_preference", options, key=key, help=pbgui_help.margin_mode_preference)
+
+    @st.fragment
+    def fragment_hsl_signal_mode(self):
+        key = "edit_bt_v7_hsl_signal_mode"
+        options = ["pside", "unified"]
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.hsl_signal_mode:
+                self.config.live.hsl_signal_mode = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.live.hsl_signal_mode
+        st.selectbox("hsl_signal_mode", options, key=key, help=pbgui_help.hsl_signal_mode)
+
+    @st.fragment
+    def fragment_hsl_position_during_cooldown_policy(self):
+        key = "edit_bt_v7_hsl_position_during_cooldown_policy"
+        options = ["panic", "normal", "manual", "tp_only", "graceful_stop"]
+        if key in st.session_state:
+            if st.session_state[key] != self.config.live.hsl_position_during_cooldown_policy:
+                self.config.live.hsl_position_during_cooldown_policy = st.session_state[key]
+        else:
+            st.session_state[key] = self.config.live.hsl_position_during_cooldown_policy
+        st.selectbox(
+            "hsl_position_during_cooldown_policy",
+            options,
+            key=key,
+            help=pbgui_help.hsl_position_during_cooldown_policy,
+        )
+
     # compress_cache
     @st.fragment
     def fragment_compress_cache(self):
@@ -1363,6 +1431,20 @@ class BacktestV7Item(ConfigV7Editor):
             self.fragment_volume_normalization()
         with col5:
             self.fragment_hedge_mode()
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            self.fragment_liquidation_threshold()
+        with col2:
+            self.fragment_market_order_slippage_pct()
+        with col3:
+            self.fragment_market_order_near_touch_threshold()
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            self.fragment_margin_mode_preference()
+        with col2:
+            self.fragment_hsl_signal_mode()
+        with col3:
+            self.fragment_hsl_position_during_cooldown_policy()
         # coin_sources (full width)
         self.fragment_coin_sources()
         # Suite (multi-scenario)
