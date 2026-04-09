@@ -29,6 +29,8 @@ import pbgui_purefunc as pbfunc
 from Config import CURRENCY_METRICS, SHARED_METRICS
 from pbgui_func import redirect_to_fastapi_v7_backtest_draft
 
+PARETO_LOADER_CACHE_VERSION = 2
+
 
 class ParetoExplorer:
     """Pareto Explorer - Main Application"""
@@ -147,7 +149,13 @@ class ParetoExplorer:
         # Stage 1: Always load Pareto JSONs (fast)
         # Stage 2: Optionally load all_results.bin (slow)
         with timer.section("load_data"):
-            load_result = ParetoExplorer._load_data(self.results_path, load_strategy_tuple, max_configs, all_results_loaded)
+            load_result = ParetoExplorer._load_data(
+                self.results_path,
+                load_strategy_tuple,
+                max_configs,
+                all_results_loaded,
+                PARETO_LOADER_CACHE_VERSION,
+            )
         if load_result.get("error"):
             # Clear the cache so next attempt re-runs the load (don't cache errors)
             ParetoExplorer._load_data.clear()
@@ -285,7 +293,13 @@ class ParetoExplorer:
             return self.loader.configs
     
     @st.cache_resource
-    def _load_data(results_path: str, load_strategy: tuple, max_configs: int, all_results_loaded: bool):
+    def _load_data(
+        results_path: str,
+        load_strategy: tuple,
+        max_configs: int,
+        all_results_loaded: bool,
+        cache_version: int,
+    ):
         """
         Two-stage data loading (uses @st.cache_resource)
         
@@ -2113,9 +2127,9 @@ class ParetoExplorer:
             st.session_state.use_weighted_metrics = use_weighted
         
         # Adjust scoring metrics based on toggle
+        display_metrics = []
         if use_weighted:
             # Try to use weighted versions
-            display_metrics = []
             for metric in scoring_metrics:
                 if '_w_' not in metric and not metric.endswith('_w'):
                     # Try to find weighted version
@@ -2124,6 +2138,15 @@ class ParetoExplorer:
                         display_metrics.append(weighted_metric)
                     else:
                         display_metrics.append(metric)  # Fallback to unweighted
+                else:
+                    display_metrics.append(metric)
+        else:
+            # Use unweighted versions
+            for metric in scoring_metrics:
+                if '_w_' in metric or metric.endswith('_w_usd') or metric.endswith('_w_btc'):
+                    # Remove _w
+                    unweighted_metric = metric.replace('_w_', '_').replace('_w_usd', '_usd').replace('_w_btc', '_btc')
+                    display_metrics.append(unweighted_metric)
                 else:
                     display_metrics.append(metric)
 
@@ -2150,16 +2173,6 @@ class ParetoExplorer:
                     display_metrics.append(m)
                 if len(display_metrics) >= 2:
                     break
-        else:
-            # Use unweighted versions
-            display_metrics = []
-            for metric in scoring_metrics:
-                if '_w_' in metric or metric.endswith('_w_usd') or metric.endswith('_w_btc'):
-                    # Remove _w
-                    unweighted_metric = metric.replace('_w_', '_').replace('_w_usd', '_usd').replace('_w_btc', '_btc')
-                    display_metrics.append(unweighted_metric)
-                else:
-                    display_metrics.append(metric)
         
         col1, col2 = st.columns(2)
         
