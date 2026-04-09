@@ -1,5 +1,32 @@
 # PBGUI Upstream Divergence
 
+## Rebase Discipline
+
+When rebuilding PBGUI on top of upstream, do not reapply local changes just
+because they existed before.
+
+Use this order:
+
+1. Verify the current upstream behavior from code and runtime smoke checks.
+2. Confirm the linked PB7 behavior and config surface that PBGUI is expected to
+   support.
+3. Reproduce the missing or broken workflow with the smallest concrete config or
+   UI path.
+4. Reapply only the minimal local patch that closes that exact gap.
+5. Re-test the exact workflow after the patch.
+
+Additional rules:
+
+1. If upstream already supports the required behavior, do not keep a local UI
+   divergence for it.
+2. If a PB7 feature is disabled or unused in the target workflow, do not expose
+   or patch around it until a real use-case proves the need.
+3. Treat UI exposure, config serialization, and runtime process launching as
+   separate responsibilities; avoid broad patches across all three unless the
+   reproduced issue requires it.
+4. Every kept divergence should have a short reason explaining why upstream was
+   not sufficient and what exact workflow the patch preserves.
+
 ## Purpose
 
 This is the single reference for PBGUI behavior that must be preserved on top
@@ -27,6 +54,7 @@ Start from `upstream/main`, then restore the following divergence packages:
 - [Config.py](/app/pbgui/Config.py)
 - [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
 - [BacktestV7.py](/app/pbgui/BacktestV7.py)
+- [navi/v7_backtest.py](/app/pbgui/navi/v7_backtest.py)
 - [pbgui_help.py](/app/pbgui/pbgui_help.py)
 
 ### Required behavior
@@ -157,6 +185,13 @@ Start from `upstream/main`, then restore the following divergence packages:
 7. Optimize-result payloads that stored suite data at top-level under
    `backtest` must be normalized back into `backtest.suite` when reloaded into
    the editor.
+
+8. Backtest result `BT selected` must preserve the selected result config's
+   original `backtest.end_date`; it must not rewrite the config to `now`.
+
+9. The Backtest edit screen must allow leaving the editor through the top
+   `Results` tab. If an edit config is active, selecting `Results` should show
+   that config's result set instead of forcing the main view back to `Configs`.
 
 ## Package 3: Reverse-Proxy And Standalone Dashboard Behavior
 

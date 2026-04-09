@@ -327,7 +327,9 @@ if "_bt_v7_main_view_next" in st.session_state:
     st.session_state.bt_v7_main_view = st.session_state["_bt_v7_main_view_next"]
     del st.session_state["_bt_v7_main_view_next"]
 elif "bt_v7_main_view" not in st.session_state:
-    if "bt_v7_queue_log_preselect" in st.session_state:
+    if "bt_v7" in st.session_state:
+        st.session_state.bt_v7_main_view = "Configs"
+    elif "bt_v7_queue_log_preselect" in st.session_state:
         st.session_state.bt_v7_main_view = "Log"
     elif "bt_v7_queue" in st.session_state:
         st.session_state.bt_v7_main_view = "Queue"
@@ -337,9 +339,9 @@ elif "bt_v7_main_view" not in st.session_state:
         st.session_state.bt_v7_main_view = "Results"
     else:
         st.session_state.bt_v7_main_view = "Configs"
-# bt_v7 edit always lives under Configs tab
-if "bt_v7" in st.session_state:
-    st.session_state.bt_v7_main_view = "Configs"
+if "bt_v7" in st.session_state and st.session_state.bt_v7_main_view == "Results":
+    st.session_state.bt_v7_results = st.session_state.bt_v7.results
+    del st.session_state.bt_v7
 _active = st.segmented_control(
     "Backtest view", options=_MAIN_TABS, default="Configs", key="bt_v7_main_view", label_visibility="collapsed"
 )
