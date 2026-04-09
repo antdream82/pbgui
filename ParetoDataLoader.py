@@ -162,6 +162,38 @@ class ParetoDataLoader:
             out[k] = (lo, hi)
         return out
 
+    @staticmethod
+    def _normalize_scoring_metrics(scoring: Any) -> List[str]:
+        """Return metric names from legacy strings or PB7 metric+goal dict specs."""
+
+        if not isinstance(scoring, list):
+            return []
+
+        normalized: List[str] = []
+        seen = set()
+
+        def _decode(value):
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="ignore")
+            return value
+
+        for item in scoring:
+            item = _decode(item)
+            metric = None
+            if isinstance(item, dict):
+                decoded = {_decode(k): _decode(v) for k, v in item.items()}
+                metric = decoded.get("metric") or decoded.get("name")
+            else:
+                metric = item
+            if not isinstance(metric, str):
+                continue
+            metric = metric.strip()
+            if not metric or metric in seen:
+                continue
+            normalized.append(metric)
+            seen.add(metric)
+        return normalized
+
     def _is_scan_cache_valid(self) -> bool:
         """Check if scan cache exists and matches current all_results.bin (mtime+size)."""
         meta_path, npz_path = self._scan_cache_paths()
@@ -307,7 +339,7 @@ class ParetoDataLoader:
                 # populate scoring_metrics, optimize bounds/limits, scenarios, scenario_labels
                 try:
                     optimize_config = first_obj.get('optimize', {}) or {}
-                    self.scoring_metrics = optimize_config.get('scoring', []) or []
+                    self.scoring_metrics = self._normalize_scoring_metrics(optimize_config.get('scoring', []) or [])
                     self.optimize_bounds = self._normalize_optimize_bounds(optimize_config.get('bounds', {}) or {})
                     self.optimize_limits = optimize_config.get('limits', []) or []
                 except Exception:
@@ -339,7 +371,7 @@ class ParetoDataLoader:
             arrays = scan_cache.get("arrays")
             try:
                 # Restore globals from cache
-                self.scoring_metrics = meta.get("scoring_metrics") or []
+                self.scoring_metrics = self._normalize_scoring_metrics(meta.get("scoring_metrics") or [])
                 self.scenario_labels = meta.get("scenario_labels") or []
                 self.optimize_bounds = self._normalize_optimize_bounds(meta.get("optimize_bounds") or {})
                 self.optimize_limits = meta.get("optimize_limits") or []
@@ -582,7 +614,7 @@ class ParetoDataLoader:
             if 'optimize' in config_data:
                 optimize_config = config_data.get('optimize', {}) or {}
                 if not self.scoring_metrics:
-                    self.scoring_metrics = optimize_config.get('scoring', []) or []
+                    self.scoring_metrics = self._normalize_scoring_metrics(optimize_config.get('scoring', []) or [])
                 if not self.optimize_bounds:
                     self.optimize_bounds = self._normalize_optimize_bounds(optimize_config.get('bounds', {}) or {})
                 if not self.optimize_limits:
@@ -1719,7 +1751,7 @@ class ParetoDataLoader:
             if isinstance(scoring, list):
                 scoring = [(x.decode('utf-8', errors='ignore') if isinstance(x, bytes) else x) for x in scoring]
             optimize_settings = {
-                'scoring': scoring or [],
+                'scoring': self._normalize_scoring_metrics(scoring or []),
                 'limits': opt.get(b'limits', []) or [],
                 'iters': opt.get(b'iters', 0) or 0,
                 'population_size': opt.get(b'population_size', 0) or 0,
@@ -1883,7 +1915,7 @@ class ParetoDataLoader:
 
         if not self.scoring_metrics and 'optimize' in config_data:
             optimize_config = config_data.get('optimize', {}) or {}
-            self.scoring_metrics = optimize_config.get('scoring', []) or []
+            self.scoring_metrics = self._normalize_scoring_metrics(optimize_config.get('scoring', []) or [])
             if not self.optimize_bounds:
                 self.optimize_bounds = self._normalize_optimize_bounds(optimize_config.get('bounds', {}) or {})
                 self.optimize_limits = optimize_config.get('limits', []) or []
@@ -1947,7 +1979,7 @@ class ParetoDataLoader:
         if 'optimize' in config_data:
             opt = config_data.get('optimize', {}) or {}
             optimize_settings = {
-                'scoring': opt.get('scoring', []) or [],
+                'scoring': self._normalize_scoring_metrics(opt.get('scoring', []) or []),
                 'limits': opt.get('limits', []) or [],
                 'iters': opt.get('iters', 0) or 0,
                 'population_size': opt.get('population_size', 0) or 0,
@@ -2075,7 +2107,7 @@ class ParetoDataLoader:
         # Extract scoring metrics from optimize config (first time only)
         if not self.scoring_metrics and 'optimize' in config_data:
             optimize_config = config_data['optimize']
-            self.scoring_metrics = optimize_config.get('scoring', [])
+            self.scoring_metrics = self._normalize_scoring_metrics(optimize_config.get('scoring', []))
             
             # Extract global optimize settings (first time only)
             if not self.optimize_bounds:
@@ -2153,7 +2185,7 @@ class ParetoDataLoader:
         if 'optimize' in config_data:
             opt = config_data['optimize']
             optimize_settings = {
-                'scoring': opt.get('scoring', []),
+                'scoring': self._normalize_scoring_metrics(opt.get('scoring', [])),
                 'limits': opt.get('limits', []),
                 'iters': opt.get('iters', 0),
                 'population_size': opt.get('population_size', 0),
@@ -2217,7 +2249,7 @@ class ParetoDataLoader:
             # Extract scoring metrics (first time only)
             if not self.scoring_metrics and 'optimize' in config_data:
                 optimize_config = config_data['optimize']
-                self.scoring_metrics = optimize_config.get('scoring', [])
+                self.scoring_metrics = self._normalize_scoring_metrics(optimize_config.get('scoring', []))
                 
                 # Extract global optimize settings
                 if not self.optimize_bounds:
@@ -2297,7 +2329,7 @@ class ParetoDataLoader:
             if 'optimize' in config_data:
                 opt = config_data['optimize']
                 optimize_settings = {
-                    'scoring': opt.get('scoring', []),
+                    'scoring': self._normalize_scoring_metrics(opt.get('scoring', [])),
                     'limits': opt.get('limits', []),
                     'iters': opt.get('iters', 0),
                     'population_size': opt.get('population_size', 0),

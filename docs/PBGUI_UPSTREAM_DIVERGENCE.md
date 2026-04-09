@@ -54,6 +54,8 @@ Start from `upstream/main`, then restore the following divergence packages:
 - [Config.py](/app/pbgui/Config.py)
 - [OptimizeV7.py](/app/pbgui/OptimizeV7.py)
 - [BacktestV7.py](/app/pbgui/BacktestV7.py)
+- [ParetoDataLoader.py](/app/pbgui/ParetoDataLoader.py)
+- [ParetoExplorer.py](/app/pbgui/ParetoExplorer.py)
 - [navi/v7_backtest.py](/app/pbgui/navi/v7_backtest.py)
 - [pbgui_help.py](/app/pbgui/pbgui_help.py)
 
@@ -192,6 +194,11 @@ Start from `upstream/main`, then restore the following divergence packages:
 9. The Backtest edit screen must allow leaving the editor through the top
    `Results` tab. If an edit config is active, selecting `Results` should show
    that config's result set instead of forcing the main view back to `Configs`.
+
+10. Pareto Explorer must accept both legacy string scoring entries and current
+    PB7 metric+goal scoring entries such as `{"metric": "gain_usd", "goal":
+    "max"}`. UI code should use the metric name for lookups into
+    `suite_metrics`; dict scoring specs must not be used as hash keys.
 
 ## Package 3: Reverse-Proxy And Standalone Dashboard Behavior
 
