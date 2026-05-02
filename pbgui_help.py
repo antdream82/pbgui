@@ -708,51 +708,6 @@ hedge_mode = """
     Note: effective hedge_mode also depends on exchange capability.
     ```"""
 
-margin_mode_preference = """
-    ```
-    Preferred live margin mode when a symbol supports both cross and isolated.
-    Typical values: cross, isolated, auto, auto_cross, auto_isolated.
-    ```"""
-
-hsl_signal_mode = """
-    ```
-    Select whether HSL drawdown is tracked per-side (pside) or from one unified
-    account-level strategy signal (unified).
-    ```"""
-
-hsl_position_during_cooldown_policy = """
-    ```
-    Live policy for a position that appears on a halted side during HSL RED cooldown.
-    Common values: panic, normal, manual, tp_only, graceful_stop.
-    ```"""
-
-hsl_enabled = """
-    ```
-    Enable side-specific equity hard stop loss runtime for this side.
-    ```"""
-
-hsl_no_restart_drawdown_threshold = """
-    ```
-    Terminal HSL threshold. If reached after a RED event, the side will not auto-restart.
-    Must satisfy hsl_red_threshold <= value <= 1.0.
-    ```"""
-
-hsl_orange_tier_mode = """
-    ```
-    Behavior to apply while the side is in the HSL orange tier.
-    ```"""
-
-hsl_panic_close_order_type = """
-    ```
-    Order type used for HSL RED panic close execution or simulation.
-    ```"""
-
-hsl_tier_ratios = """
-    ```
-    Multipliers used to derive yellow and orange HSL thresholds from hsl_red_threshold.
-    Must satisfy 0 < yellow < orange < 1.
-    ```"""
-
 TWE_long_short = """
     ```
     total wallet exposure limits long and short.
@@ -1064,10 +1019,24 @@ limits_penalize_if = """
     > or greater_than   Penalize if metric value > threshold
                         Use for metrics to minimize (drawdown, loss_profit_ratio)
                         Default stat: max
+
+    >= or greater_than_or_equal
+                        Penalize if metric value >= threshold
+                        Default stat: max
     
     < or less_than      Penalize if metric value < threshold
                         Use for metrics to maximize (adg, sharpe_ratio)
                         Default stat: min
+
+    <= or less_than_or_equal
+                        Penalize if metric value <= threshold
+                        Default stat: min
+
+    == or equal_to      Penalize if metric value == threshold
+                        Default stat: mean
+
+    != or not_equal     Penalize if metric value != threshold
+                        Default stat: mean
     
     outside_range       Penalize if value < low OR value > high
                         Use to keep a metric within [low, high]
@@ -1091,6 +1060,7 @@ limits_stat = """
     min     Use the minimum value (default for less_than)
     max     Use the maximum value (default for greater_than)
     std     Use the standard deviation
+    median  Use the median value
     
     Leave empty to use the default based on penalize_if mode.
     
@@ -1140,14 +1110,6 @@ mutation_indpb = """
     Probability that each attribute mutates when a mutation is triggered.
     Set to 0 (default) to auto-scale to 1 / number_of_parameters,
     or supply an explicit probability between 0 and 1.
-    ```"""
-
-round_to_n_significant_digits = """
-    ```
-    Global precision for continuous optimize bounds that do not define an explicit step.
-    Lower values make the search coarser and reduce meaningless micro-variation.
-    Higher values make the search finer.
-    Explicit [low, high, step] bounds always override this setting.
     ```"""
 
 scoring = """
@@ -1307,29 +1269,6 @@ filter_volatility_drop_pct = """
     Example: 0.2 drops the top 20% most volatile coins, forcing the selector to choose among the calmer 80%.
     Log range is computed from 1m OHLCVs as mean(ln(high / low)).
     In forager mode, the bot selects coins with the highest log-range values for opening positions.
-    ```"""
-
-forager_score_weights = """
-    ```
-    Relative weights for forager coin ranking.
-    ema_readiness favors symbols with enough candle history,
-    volatility favors noisier symbols,
-    and volume favors stronger relative volume.
-    ```"""
-
-hsl_cooldown_minutes_after_red = """
-    ```
-    Cooldown period after an HSL red event before normal trading resumes on that side.
-    ```"""
-
-hsl_ema_span_minutes = """
-    ```
-    EMA span in minutes used by HSL state detection on that side.
-    ```"""
-
-hsl_red_threshold = """
-    ```
-    Threshold that triggers the HSL red state on that side.
     ```"""
 
 # filter_relative_volume_clip_pct = """
@@ -1557,13 +1496,6 @@ market_orders_allowed = """
     market price. If false, will only place limit orders. Default is true.
     ```"""
 
-market_order_near_touch_threshold = """
-    ```
-    Distance threshold used when market_orders_allowed is enabled.
-    If an order price is within this fractional distance of market price,
-    PB7 may emit it as a market order. Default: 0.001.
-    ```"""
-
 mimic_backtest_1m_delay = """
     ```
     If true, the bot will only update and evaluate open orders once per full minute, synchronized to the clock (e.g., 12:01:00, 12:02:00, etc.).
@@ -1591,8 +1523,7 @@ dynamic_ignore = """
     added to the ignored_coins list. Coins in ignored_symbols_long or
     ignored_symbols_short will also be added to the ignored_coins list.
     Update interval is configured in PBCoinData.
-    On passivbot6 PBRun will restart the bot if needed.
-    On passivbot7 PBRun creat the ignored_coins.json file and pb7 will use this list as filter.
+    PBRun creates the ignored_coins.json file and pb7 will use this list as filter.
     ```"""
 
 notices_ignore = """
@@ -1655,19 +1586,6 @@ maker_fee_override = """
     Set to -1 to use exchange-derived maker fees.
     ```"""
 
-liquidation_threshold = """
-    ```
-    Early-stop backtest equity floor. The run is marked liquidated once total
-    equity falls to or below starting_balance * liquidation_threshold.
-    Must satisfy 0.0 <= x < 1.0. Default: 0.05.
-    ```"""
-
-market_order_slippage_pct = """
-    ```
-    Backtest-only slippage applied whenever simulated execution uses a market order.
-    Default: 0.0005 (5 bps).
-    ```"""
-
 ohlcv_source_dir = """
     ```
     Optional path to a local OHLCV archive to use for backtests/optimizations.
@@ -1727,15 +1645,7 @@ write_all_results = """
 
 starting_config = """
     ```
-    Enable starting configs for the optimizer.
-    If starting_config_path is empty, the current optimize config JSON is used as the seed source.
-    ```"""
-
-starting_config_path = """
-    ```
-    Optional file or directory passed to optimize.py via -t.
-    Use this when you want to seed the optimizer from another config file or from a folder of configs.
-    Leave empty to keep the legacy behavior and use the current optimize config itself.
+    Start the optimizer with config.
     ```"""
 
 vps_swap = """
@@ -1816,12 +1726,6 @@ vps_user_pw = """
     Your user password on your vps.
     This will be set when run init.
     Will be used for sudo when run setup.
-    ```"""
-
-vps_install_pb6 = """
-    ```
-    Enable to install passivbot6 on your vps
-    If disabled, only passivbot7 will be installed.
     ```"""
 
 vps_firewall = """
@@ -1940,8 +1844,6 @@ What it does:
 
 Note:
 - PBGui services will be restarted during this update (short downtime).
-- If PB6 is not installed on the VPS, Python 3.10 components may be removed to save disk space.
-
 Warning:
 - This replaces your existing venv_pbgui on the VPS.
 
@@ -2206,12 +2108,6 @@ mimic_backtest_1m_delay = """
     ```
     If true, the bot will only update and evaluate open orders once per full minute, synchronized to the clock (e.g., 12:01:00, 12:02:00, etc.).
     This mimics the backtester's timestep logic and avoids intraminute updates. Useful for achieving higher fidelity between backtest and live performance.
-    ```"""
-
-vps_install_pb6 = """
-    ````
-    Enable to install passivbot6 on your vps
-    If disabled, only passivbot7 will be installed.
     ```"""
 
    

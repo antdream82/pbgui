@@ -6,13 +6,12 @@ import sys
 import platform
 import subprocess
 import glob
-import signal
 import configparser
 import time
 import multiprocessing
 from Exchange import Exchange, V7
 from PBCoinData import CoinData
-from pbgui_func import pb7dir, pb7venv, PBGDIR, load_symbols_from_ini, error_popup, info_popup, get_navi_paths, replace_special_chars, render_log_viewer
+from pbgui_func import pb7dir, pb7venv, PBGDIR, load_symbols_from_ini, error_popup, info_popup, get_navi_paths, replace_special_chars, render_log_viewer, redirect_to_fastapi_v7_backtest_draft, redirect_to_fastapi_v7_backtest_queue_draft
 from pbgui_purefunc import pb7_suite_preflight_errors
 import uuid
 from pathlib import Path, PurePath
@@ -26,6 +25,7 @@ from Config import (
     Logging,
     SHARED_METRICS,
     CURRENCY_METRICS,
+    DEFAULT_OPTIMIZE_SCORING,
     get_all_metrics_list,
     get_metrics_by_group,
     get_metric_groups,
@@ -34,7 +34,9 @@ from Config import (
     get_limits_metric_list_help_text,
     is_currency_metric,
     canonicalize_metric_name,
+    merge_optimize_scoring_selection,
     ALLOWED_OVERRIDES,
+    scoring_metric_names,
     get_aggregate_metrics,
     ConfigV7Editor,
 )
@@ -52,7 +54,6 @@ class OptimizeV7QueueItem:
         self.json = None
         self.exchange = None
         self.starting_config = False
-        self.starting_config_path = ""
         self.log = None
         self.log_show = False
         self.pid = None
@@ -158,44 +159,8 @@ class OptimizeV7QueueItem:
 
     def stop(self):
         if self.is_running():
-            try:
-                parent = psutil.Process(self.pid)
-            except (psutil.NoSuchProcess, psutil.ZombieProcess):
-                return
-
-            if platform.system() != "Windows":
-                # Let optimize.py unwind through its KeyboardInterrupt/finally path so it can
-                # close the pool and unlink SharedMemory segments under /dev/shm.
-                try:
-                    os.killpg(parent.pid, signal.SIGINT)
-                except ProcessLookupError:
-                    return
-                except Exception:
-                    pass
-
-                deadline = time.time() + 20.0
-                while time.time() < deadline:
-                    if not self.is_running():
-                        return
-                    time.sleep(0.25)
-
-                try:
-                    os.killpg(parent.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    return
-                except Exception:
-                    pass
-
-                deadline = time.time() + 5.0
-                while time.time() < deadline:
-                    if not self.is_running():
-                        return
-                    time.sleep(0.25)
-
-            try:
-                children = parent.children(recursive=True)
-            except (psutil.NoSuchProcess, psutil.ZombieProcess):
-                return
+            parent = psutil.Process(self.pid)
+            children = parent.children(recursive=True)
             children.append(parent)
             for p in children:
                 try:
@@ -252,23 +217,7 @@ class OptimizeV7QueueItem:
             new_os_path = os.path.dirname(pb7venv()) + os.pathsep + old_os_path
             os.environ['PATH'] = new_os_path
             if self.starting_config:
-                starting_target = self.starting_config_path.strip() if self.starting_config_path else ""
-                if starting_target:
-                    starting_target = str(Path(starting_target).expanduser())
-                    if not Path(starting_target).exists():
-                        msg = f"Starting config path does not exist: {starting_target}"
-                        _emit_error(msg)
-                        try:
-                            self.log.parent.mkdir(parents=True, exist_ok=True)
-                            with open(self.log, "w", encoding="utf-8") as log_f:
-                                log_f.write(msg + "\n")
-                        except Exception:
-                            pass
-                        os.environ['PATH'] = old_os_path
-                        return
-                else:
-                    starting_target = str(PurePath(f'{self.json}'))
-                cmd = [pb7venv(), '-u', PurePath(f'{pb7dir()}/src/optimize.py'), '-t', starting_target, str(PurePath(f'{self.json}'))]
+                cmd = [pb7venv(), '-u', PurePath(f'{pb7dir()}/src/optimize.py'), '-t', str(PurePath(f'{self.json}')), str(PurePath(f'{self.json}'))]
             else:
                 cmd = [pb7venv(), '-u', PurePath(f'{pb7dir()}/src/optimize.py'), str(PurePath(f'{self.json}'))]
             self.log.parent.mkdir(parents=True, exist_ok=True)
@@ -376,7 +325,6 @@ class OptimizeV7Queue:
                 config = OptimizeV7Item(qitem.json)
                 qitem.exchange = q_config["exchange"]
                 qitem.starting_config = config.config.pbgui.starting_config
-                qitem.starting_config_path = getattr(config.config.pbgui, "starting_config_path", "")
                 qitem.log = Path(f'{PBGDIR}/data/logs/optimizes/{qitem.filename}.log')
                 qitem.pidfile = Path(f'{PBGDIR}/data/opt_v7_queue/{qitem.filename}.pid')
                 self.add(qitem)
@@ -612,6 +560,23 @@ class OptimizeV7Results:
     
     def initialize(self):
         self.find_results()
+
+    @staticmethod
+    def _reset_pareto_selection_state():
+        current_key = st.session_state.get("ed_key", 0)
+        st.session_state.pop(f'select_paretos_{current_key}', None)
+        st.session_state.ed_key = current_key + 1
+
+    @staticmethod
+    def _dedupe_paths(paths: list[str]) -> list[str]:
+        unique_paths = []
+        seen = set()
+        for path in paths:
+            if not path or path in seen:
+                continue
+            unique_paths.append(path)
+            seen.add(path)
+        return unique_paths
     
     def find_results(self):
         if self.results_path.exists():
@@ -709,6 +674,7 @@ class OptimizeV7Results:
                 if "view" in ed["edited_rows"][row]:
                     if ed["edited_rows"][row]["view"]:
                         if self.results_d[row]["Result"]:
+                            self._reset_pareto_selection_state()
                             st.session_state.opt_v7_pareto = self.results_d[row]["index"]
                             st.session_state.opt_v7_pareto_name = self.results_d[row]["Name"]
                             st.session_state.opt_v7_pareto_directory = self.results_d[row]["Result"]
@@ -822,6 +788,7 @@ class OptimizeV7Results:
         def clear_paretos():
             if "d_paretos" in st.session_state:
                 del st.session_state.d_paretos
+            self._reset_pareto_selection_state()
         
         # New format: Show dropdowns based on whether suite is enabled
         if is_new_format:
@@ -862,95 +829,9 @@ class OptimizeV7Results:
                     if st.session_state.opt_v7_pareto_select_analysis != self.selected_analysis:
                         self.selected_analysis = st.session_state.opt_v7_pareto_select_analysis
                     st.selectbox('analyses', options=select_analysis, key="opt_v7_pareto_select_analysis", on_change=clear_paretos)
-
-        if "opt_v7_pareto_custom_column" not in st.session_state:
-            st.session_state.opt_v7_pareto_custom_column = ""
-        st.text_input(
-            "Custom column path",
-            key="opt_v7_pareto_custom_column",
-            on_change=clear_paretos,
-            help="Add one extra result column. Metric names (e.g. gain_per_actual_exposure_usd) and config paths (e.g. bot.long.total_wallet_exposure_limit or live.hedge_mode) are supported.",
-        )
         
         if not "d_paretos" in st.session_state:
             d = []
-            custom_column_path = str(st.session_state.get("opt_v7_pareto_custom_column", "") or "").strip()
-
-            def first_present(mapping, *keys, default=None):
-                for key in keys:
-                    if key in mapping:
-                        return mapping[key]
-                return default
-
-            def deep_get(mapping, path, default=None):
-                current = mapping
-                for part in path.split("."):
-                    if isinstance(current, dict):
-                        if part not in current:
-                            return default
-                        current = current[part]
-                    elif isinstance(current, list) and part.isdigit():
-                        idx = int(part)
-                        if idx < 0 or idx >= len(current):
-                            return default
-                        current = current[idx]
-                    else:
-                        return default
-                return current
-
-            def with_currency_candidates(path):
-                candidates = [path]
-                if not path.endswith("_usd") and not path.endswith("_btc"):
-                    candidates.extend([f"{path}_usd", f"{path}_btc"])
-                return candidates
-
-            def resolve_custom_value(pareto):
-                if not custom_column_path:
-                    return None
-                path = custom_column_path
-                if is_new_format:
-                    if has_suite_metrics:
-                        suite_metrics = pareto.get("suite_metrics", {}).get("metrics", {})
-                        selected_scenario = st.session_state.opt_v7_pareto_scenario
-                        selected_stat = st.session_state.opt_v7_pareto_statistic
-                        for candidate in with_currency_candidates(path):
-                            metric_data = suite_metrics.get(candidate, {})
-                            if metric_data:
-                                if selected_scenario == "Aggregated":
-                                    return metric_data.get("stats", {}).get(selected_stat)
-                                return metric_data.get("scenarios", {}).get(selected_scenario)
-                    else:
-                        metrics_stats = pareto.get("metrics", {}).get("stats", {})
-                        selected_stat = st.session_state.opt_v7_pareto_statistic
-                        for candidate in with_currency_candidates(path):
-                            if candidate in metrics_stats:
-                                return metrics_stats.get(candidate, {}).get(selected_stat)
-                else:
-                    if select_analysis and st.session_state.opt_v7_pareto_select_analysis in select_analysis:
-                        if st.session_state.opt_v7_pareto_select_analysis == "analyses_combined":
-                            analysis = pareto.get("analyses_combined", {})
-                            for candidate in with_currency_candidates(path):
-                                val = first_present(
-                                    analysis,
-                                    f"{candidate}_max",
-                                    f"{candidate}_mean",
-                                    candidate,
-                                    default=None,
-                                )
-                                if val is not None:
-                                    return val
-                        else:
-                            analysis = pareto.get("analyses", {}).get(st.session_state.opt_v7_pareto_select_analysis, {})
-                            for candidate in with_currency_candidates(path):
-                                if candidate in analysis:
-                                    return analysis.get(candidate)
-
-                for candidate in [path, f"config.{path}", f"backtest.{path}"]:
-                    val = deep_get(pareto, candidate, default=None)
-                    if val is not None:
-                        return val
-                return None
-
             for id, pareto in enumerate(self.paretos):
                 name = pareto["index_filename"].split("/")[-1]
                 
@@ -978,15 +859,15 @@ class OptimizeV7Results:
                             'id': id,
                             'view': False,
                             'adg': get_metric_value("adg_usd"),
-                            'omega_ratio': get_metric_value("omega_ratio_usd"),
+                            'mdg': get_metric_value("mdg_usd"),
                             'drawdown_worst': get_metric_value("drawdown_worst_usd"),
-                            'peak_recovery_hours': get_metric_value("peak_recovery_hours_equity_usd"),
                             'ulcer_index': get_metric_value("ulcer_index_usd"),
                             'adg_over_ui': get_metric_value("adg_over_ui_usd"),
                             'gain_over_ui': get_metric_value("gain_over_ui_usd"),
                             'gain': get_metric_value("gain_usd"),
-                            'gain_per_actual_exposure': get_metric_value("gain_per_actual_exposure_usd", None),
                             'total_wallet_exposure_mean': get_metric_value("total_wallet_exposure_mean"),
+                            'loss_profit_ratio': get_metric_value("loss_profit_ratio"),
+                            'position_held_hours_max': get_metric_value("position_held_hours_max"),
                             'sharpe_ratio': get_metric_value("sharpe_ratio_usd"),
                             'Name': name,
                             'file': pareto["index_filename"],
@@ -1005,15 +886,15 @@ class OptimizeV7Results:
                             'id': id,
                             'view': False,
                             'adg': get_stat_value("adg_usd"),
-                            'omega_ratio': get_stat_value("omega_ratio_usd"),
+                            'mdg': get_stat_value("mdg_usd"),
                             'drawdown_worst': get_stat_value("drawdown_worst_usd"),
-                            'peak_recovery_hours': get_stat_value("peak_recovery_hours_equity_usd"),
                             'ulcer_index': get_stat_value("ulcer_index_usd"),
                             'adg_over_ui': get_stat_value("adg_over_ui_usd"),
                             'gain_over_ui': get_stat_value("gain_over_ui_usd"),
                             'gain': get_stat_value("gain_usd"),
-                            'gain_per_actual_exposure': get_stat_value("gain_per_actual_exposure_usd", None),
                             'total_wallet_exposure_mean': get_stat_value("total_wallet_exposure_mean"),
+                            'loss_profit_ratio': get_stat_value("loss_profit_ratio"),
+                            'position_held_hours_max': get_stat_value("position_held_hours_max"),
                             'sharpe_ratio': get_stat_value("sharpe_ratio_usd"),
                             'Name': name,
                             'file': pareto["index_filename"],
@@ -1023,69 +904,32 @@ class OptimizeV7Results:
                     if select_analysis and st.session_state.opt_v7_pareto_select_analysis in select_analysis:
                         if st.session_state.opt_v7_pareto_select_analysis == "analyses_combined":
                             analysis = pareto["analyses_combined"]
-                            # Old optimize payloads do not always persist every metric.
-                            # Prefer explicit legacy/current keys and leave missing metrics blank
-                            # rather than rendering a misleading zero.
-                            adg = first_present(analysis, "adg_max", "adg_mean", "adg", default=0)
-                            omega_ratio = first_present(
-                                analysis, "omega_ratio_max", "omega_ratio_mean", "omega_ratio", default=0
-                            )
-                            drawdown_worst = first_present(
-                                analysis,
-                                "drawdown_worst_max",
-                                "drawdown_worst_mean",
-                                "drawdown_worst",
-                                default=0,
-                            )
-                            peak_recovery_hours = first_present(
-                                analysis,
-                                "peak_recovery_hours_equity_max",
-                                "peak_recovery_hours_equity_mean",
-                                "peak_recovery_hours_equity",
-                                "peak_recovery_hours_pnl_max",
-                                "peak_recovery_hours_pnl_mean",
-                                "peak_recovery_hours_pnl",
-                            )
-                            ulcer_index = first_present(
-                                analysis, "ulcer_index_max", "ulcer_index_mean", "ulcer_index"
-                            )
-                            adg_over_ui = first_present(
-                                analysis, "adg_over_ui_max", "adg_over_ui_mean", "adg_over_ui"
-                            )
-                            gain_over_ui = first_present(
-                                analysis, "gain_over_ui_max", "gain_over_ui_mean", "gain_over_ui"
-                            )
-                            gain = first_present(analysis, "gain_max", "gain_mean", "gain", default=0)
-                            gain_per_actual_exposure = first_present(
-                                analysis,
-                                "gain_per_actual_exposure_max",
-                                "gain_per_actual_exposure_mean",
-                                "gain_per_actual_exposure",
-                                default=None,
-                            )
-                            total_wallet_exposure_mean = first_present(
-                                analysis,
-                                "total_wallet_exposure_mean_max",
-                                "total_wallet_exposure_mean_mean",
-                                "total_wallet_exposure_mean",
-                            )
-                            sharpe_ratio = first_present(
-                                analysis, "sharpe_ratio_max", "sharpe_ratio_mean", "sharpe_ratio", default=0
-                            )
+                            # Support both old format (_max suffix) and new format (_mean suffix)
+                            adg = analysis.get("adg_max", analysis.get("adg_mean", 0))
+                            mdg = analysis.get("mdg_max", analysis.get("mdg_mean", 0))
+                            drawdown_worst = analysis.get("drawdown_worst_max", analysis.get("drawdown_worst_mean", 0))
+                            ulcer_index = analysis.get("ulcer_index_max", analysis.get("ulcer_index_mean", 0))
+                            adg_over_ui = analysis.get("adg_over_ui_max", analysis.get("adg_over_ui_mean", 0))
+                            gain_over_ui = analysis.get("gain_over_ui_max", analysis.get("gain_over_ui_mean", 0))
+                            gain = analysis.get("gain_max", analysis.get("gain_mean", 0))
+                            total_wallet_exposure_mean = analysis.get("total_wallet_exposure_mean_max", analysis.get("total_wallet_exposure_mean_mean", 0))
+                            loss_profit_ratio = analysis.get("loss_profit_ratio_max", analysis.get("loss_profit_ratio_mean", 0))
+                            position_held_hours_max = analysis.get("position_held_hours_max_max", analysis.get("position_held_hours_max_mean", 0))
+                            sharpe_ratio = analysis.get("sharpe_ratio_max", analysis.get("sharpe_ratio_mean", 0))
                             d.append({
                                 'Select': False,
                                 'id': id,
                                 'view': False,
                                 'adg': adg,
-                                'omega_ratio': omega_ratio,
+                                'mdg': mdg,
                                 'drawdown_worst': drawdown_worst,
-                                'peak_recovery_hours': peak_recovery_hours,
                                 'ulcer_index': ulcer_index,
                                 'adg_over_ui': adg_over_ui,
                                 'gain_over_ui': gain_over_ui,
                                 'gain': gain,
-                                'gain_per_actual_exposure': gain_per_actual_exposure,
                                 'total_wallet_exposure_mean': total_wallet_exposure_mean,
+                                'loss_profit_ratio': loss_profit_ratio,
+                                'position_held_hours_max': position_held_hours_max,
                                 'sharpe_ratio': sharpe_ratio,
                                 'Name': name,
                                 'file': pareto["index_filename"],
@@ -1099,23 +943,19 @@ class OptimizeV7Results:
                                     'id': id,
                                     'view': False,
                                     'adg': analysis["adg"],
-                                    'omega_ratio': analysis.get("omega_ratio", 0),
+                                    'mdg': analysis["mdg"],
                                     'drawdown_worst': analysis["drawdown_worst"],
-                                    'peak_recovery_hours': first_present(
-                                        analysis, "peak_recovery_hours_equity", "peak_recovery_hours_pnl"
-                                    ),
-                                    'ulcer_index': analysis.get("ulcer_index"),
-                                    'adg_over_ui': analysis.get("adg_over_ui"),
-                                    'gain_over_ui': analysis.get("gain_over_ui"),
+                                    'ulcer_index': analysis.get("ulcer_index", 0),
+                                    'adg_over_ui': analysis.get("adg_over_ui", 0),
+                                    'gain_over_ui': analysis.get("gain_over_ui", 0),
                                     'gain': analysis["gain"],
-                                    'gain_per_actual_exposure': analysis.get("gain_per_actual_exposure"),
-                                    'total_wallet_exposure_mean': analysis.get("total_wallet_exposure_mean"),
+                                    'total_wallet_exposure_mean': analysis.get("total_wallet_exposure_mean", 0),
+                                    'loss_profit_ratio': analysis["loss_profit_ratio"],
+                                    'position_held_hours_max': analysis["position_held_hours_max"],
                                     'sharpe_ratio': analysis["sharpe_ratio"],
                                     'Name': name,
                                     'file': pareto["index_filename"],
                                 })
-                if custom_column_path and d:
-                    d[-1][custom_column_path] = resolve_custom_value(pareto)
             st.session_state.d_paretos = d
         d_paretos = st.session_state.d_paretos
         column_config = {
@@ -1124,12 +964,6 @@ class OptimizeV7Results:
             "file": None,
             "view": st.column_config.CheckboxColumn(label="View"),
             "delete": st.column_config.CheckboxColumn(label="Delete"),
-            "gain_per_actual_exposure": st.column_config.NumberColumn(label="Gain/ActExp", format="%.4f"),
-            "drawdown_worst": st.column_config.NumberColumn(label="dd_worst", format="%.4f"),
-            "omega_ratio": st.column_config.NumberColumn(label="omega", format="%.4f"),
-            "sharpe_ratio": st.column_config.NumberColumn(label="sharpe", format="%.4f"),
-            "adg_over_ui": st.column_config.NumberColumn(label="ADG/UI", format="%.4f"),
-            "gain_over_ui": st.column_config.NumberColumn(label="Gain/UI", format="%.4f"),
             }
         #Display paretos
         height = 36+(len(d_paretos))*35
@@ -1155,6 +989,36 @@ class OptimizeV7Results:
         if "config_v7_config_archive" in st.session_state:
             del st.session_state.config_v7_config_archive
 
+    def _build_backtest_queue_draft_items(self, backtest_paths: list[str]) -> list[dict]:
+        items = []
+        for backtest_path in self._dedupe_paths(backtest_paths):
+            bt_v7 = BacktestV7.BacktestV7Item(backtest_path)
+            base_name = bt_v7.name or "rebacktest"
+            suffix = replace_special_chars(Path(backtest_path).stem)
+            if suffix and suffix != base_name:
+                queue_name = f"{base_name}_{suffix}"
+            else:
+                queue_name = base_name
+            items.append({"name": queue_name, "config": bt_v7.config.config})
+        return items
+
+    def _get_selected_pareto_paths(self, d_paretos: list[dict], ed: dict) -> list[str]:
+        selected_paths = []
+        edited_rows = (ed or {}).get("edited_rows", {})
+        for row, changes in edited_rows.items():
+            if not isinstance(changes, dict) or not changes.get("Select"):
+                continue
+            try:
+                row_index = int(row)
+            except (TypeError, ValueError):
+                continue
+            if row_index < 0 or row_index >= len(d_paretos):
+                continue
+            path = d_paretos[row_index].get("file")
+            if path:
+                selected_paths.append(path)
+        return self._dedupe_paths(selected_paths)
+
     def backtest_selected(self):
         if "d_paretos" in st.session_state:
             d_paretos = st.session_state.d_paretos
@@ -1162,42 +1026,28 @@ class OptimizeV7Results:
             return
         ed_key = st.session_state.ed_key
         ed = st.session_state[f'select_paretos_{st.session_state.ed_key}']
-        # Get number of selected paretos
-        selected_count = sum(1 for row in ed["edited_rows"] if "Select" in ed["edited_rows"][row] and ed["edited_rows"][row]["Select"])
-        if selected_count == 0:
+        selected_paths = self._get_selected_pareto_paths(d_paretos, ed)
+        if not selected_paths:
             error_popup("No paretos selected")
             return
         self.cleanup_bt_session_state()
-        for row in ed["edited_rows"]:
-            if "Select" in ed["edited_rows"][row]:
-                if ed["edited_rows"][row]["Select"]:
-                    backtest_name = d_paretos[row]["file"]
-                    # run backtest on selected pareto
-                    if selected_count == 1:
-                        st.session_state.bt_v7 = BacktestV7.BacktestV7Item(backtest_name)
-                        st.switch_page(get_navi_paths()["V7_BACKTEST"])
-                    else:
-                        bt_v7 = BacktestV7.BacktestV7Item(backtest_name)
-                        bt_v7.save_queue()
-        st.session_state.bt_v7_queue = BacktestV7.BacktestV7Queue()
-        st.switch_page(get_navi_paths()["V7_BACKTEST"])
+        if len(selected_paths) == 1:
+            bt_v7 = BacktestV7.BacktestV7Item(selected_paths[0])
+            redirect_to_fastapi_v7_backtest_draft(bt_v7.config.config, bt_v7.name)
+            return
+        redirect_to_fastapi_v7_backtest_queue_draft(self._build_backtest_queue_draft_items(selected_paths))
     
     def backtest_all(self):
         if "d_paretos" in st.session_state:
             d_paretos = st.session_state.d_paretos
         else:
             return
-        for row in range(len(d_paretos)):
-            backtest_name = d_paretos[row]["file"]
-            # run backtest on selected pareto
-            bt_v7 = BacktestV7.BacktestV7Item(backtest_name)
-            bt_v7.save_queue()
-        if "bt_v7_results" in st.session_state:
-            del st.session_state.bt_v7_results
-        if "bt_v7_edit_symbol" in st.session_state:
-            del st.session_state.bt_v7_edit_symbol
-        st.session_state.bt_v7_queue = BacktestV7.BacktestV7Queue()
-        st.switch_page(get_navi_paths()["V7_BACKTEST"])
+        backtest_paths = self._dedupe_paths([row.get("file") for row in d_paretos])
+        if not backtest_paths:
+            error_popup("No paretos available")
+            return
+        self.cleanup_bt_session_state()
+        redirect_to_fastapi_v7_backtest_queue_draft(self._build_backtest_queue_draft_items(backtest_paths))
 
 
     def remove_selected_results(self):
@@ -1447,83 +1297,6 @@ class OptimizeV7Item(ConfigV7Editor):
             st.session_state.edit_opt_v7_logging_level = self.config.logging.level
         st.selectbox("logging level", Logging.LEVEL, format_func=lambda x: Logging.LEVEL.get(x), key="edit_opt_v7_logging_level", help=pbgui_help.logging_level)
 
-    @st.fragment
-    def fragment_hedge_mode(self):
-        if "edit_opt_v7_hedge_mode" in st.session_state:
-            if st.session_state.edit_opt_v7_hedge_mode != self.config.live.hedge_mode:
-                self.config.live.hedge_mode = st.session_state.edit_opt_v7_hedge_mode
-        else:
-            st.session_state.edit_opt_v7_hedge_mode = self.config.live.hedge_mode
-        st.checkbox("hedge_mode", key="edit_opt_v7_hedge_mode", help=pbgui_help.hedge_mode)
-
-    @st.fragment
-    def fragment_liquidation_threshold(self):
-        key = "edit_opt_v7_liquidation_threshold"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.backtest.liquidation_threshold:
-                self.config.backtest.liquidation_threshold = st.session_state[key]
-        else:
-            st.session_state[key] = float(self.config.backtest.liquidation_threshold)
-        st.number_input("liquidation_threshold", min_value=0.0, max_value=0.999999, step=0.01, key=key, help=pbgui_help.liquidation_threshold)
-
-    @st.fragment
-    def fragment_market_order_slippage_pct(self):
-        key = "edit_opt_v7_market_order_slippage_pct"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.backtest.market_order_slippage_pct:
-                self.config.backtest.market_order_slippage_pct = st.session_state[key]
-        else:
-            st.session_state[key] = float(self.config.backtest.market_order_slippage_pct)
-        st.number_input("market_order_slippage_pct", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_slippage_pct)
-
-    @st.fragment
-    def fragment_market_order_near_touch_threshold(self):
-        key = "edit_opt_v7_market_order_near_touch_threshold"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.market_order_near_touch_threshold:
-                self.config.live.market_order_near_touch_threshold = st.session_state[key]
-        else:
-            st.session_state[key] = float(self.config.live.market_order_near_touch_threshold)
-        st.number_input("market_order_near_touch_threshold", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_near_touch_threshold)
-
-    @st.fragment
-    def fragment_margin_mode_preference(self):
-        key = "edit_opt_v7_margin_mode_preference"
-        options = ["cross", "isolated", "auto", "auto_cross", "auto_isolated"]
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.margin_mode_preference:
-                self.config.live.margin_mode_preference = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.live.margin_mode_preference
-        st.selectbox("margin_mode_preference", options, key=key, help=pbgui_help.margin_mode_preference)
-
-    @st.fragment
-    def fragment_hsl_signal_mode(self):
-        key = "edit_opt_v7_hsl_signal_mode"
-        options = ["pside", "unified"]
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.hsl_signal_mode:
-                self.config.live.hsl_signal_mode = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.live.hsl_signal_mode
-        st.selectbox("hsl_signal_mode", options, key=key, help=pbgui_help.hsl_signal_mode)
-
-    @st.fragment
-    def fragment_hsl_position_during_cooldown_policy(self):
-        key = "edit_opt_v7_hsl_position_during_cooldown_policy"
-        options = ["panic", "normal", "manual", "tp_only", "graceful_stop"]
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.hsl_position_during_cooldown_policy:
-                self.config.live.hsl_position_during_cooldown_policy = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.live.hsl_position_during_cooldown_policy
-        st.selectbox(
-            "hsl_position_during_cooldown_policy",
-            options,
-            key=key,
-            help=pbgui_help.hsl_position_during_cooldown_policy,
-        )
-
     # starting_balance
     @st.fragment
     def fragment_starting_balance(self):
@@ -1554,24 +1327,6 @@ class OptimizeV7Item(ConfigV7Editor):
             st.session_state.edit_opt_v7_n_cpus = self.config.optimize.n_cpus
         st.number_input("n_cpus", min_value=1, max_value=multiprocessing.cpu_count(), step=1, key="edit_opt_v7_n_cpus", help=pbgui_help.n_cpus)
 
-    # round_to_n_significant_digits
-    @st.fragment
-    def fragment_round_to_n_significant_digits(self):
-        key = "edit_opt_v7_round_to_n_significant_digits"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.optimize.round_to_n_significant_digits:
-                self.config.optimize.round_to_n_significant_digits = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.optimize.round_to_n_significant_digits
-        st.number_input(
-            "sig_digits",
-            min_value=1,
-            max_value=10,
-            step=1,
-            key=key,
-            help=pbgui_help.round_to_n_significant_digits,
-        )
-
     # starting_config
     @st.fragment
     def fragment_starting_config(self):
@@ -1581,23 +1336,6 @@ class OptimizeV7Item(ConfigV7Editor):
         else:
             st.session_state.edit_opt_v7_starting_config = self.config.pbgui.starting_config
         st.checkbox("starting_config", key="edit_opt_v7_starting_config", help=pbgui_help.starting_config)
-
-    @st.fragment
-    def fragment_starting_config_path(self):
-        key = "edit_opt_v7_starting_config_path"
-        if key in st.session_state:
-            new_value = st.session_state[key].strip()
-            if new_value != self.config.pbgui.starting_config_path:
-                self.config.pbgui.starting_config_path = new_value
-        else:
-            st.session_state[key] = self.config.pbgui.starting_config_path
-        st.text_input(
-            "starting_config_path",
-            key=key,
-            help=pbgui_help.starting_config_path,
-            disabled=not self.config.pbgui.starting_config,
-            placeholder="optional file or directory path",
-        )
 
     # ohlcv_source_dir
     @st.fragment
@@ -1722,12 +1460,42 @@ class OptimizeV7Item(ConfigV7Editor):
     # population_size
     @st.fragment
     def fragment_population_size(self):
-        if "edit_opt_v7_population_size" in st.session_state:
-            if st.session_state.edit_opt_v7_population_size != self.config.optimize.population_size:
-                self.config.optimize.population_size = st.session_state.edit_opt_v7_population_size
+        auto_key = "edit_opt_v7_population_size_auto"
+        size_key = "edit_opt_v7_population_size"
+        config_value = self.config.optimize.population_size
+
+        if auto_key not in st.session_state:
+            st.session_state[auto_key] = config_value is None
+        if size_key not in st.session_state or st.session_state[size_key] in (None, ""):
+            st.session_state[size_key] = config_value if config_value is not None else 330
+
+        if st.session_state.get(auto_key, False):
+            if self.config.optimize.population_size is not None:
+                self.config.optimize.population_size = None
         else:
-            st.session_state.edit_opt_v7_population_size = self.config.optimize.population_size
-        st.number_input("population_size", min_value=1, max_value=10000, step=1, format="%d", key="edit_opt_v7_population_size", help=pbgui_help.population_size)
+            new_value = int(st.session_state.get(size_key, 330))
+            if new_value != self.config.optimize.population_size:
+                self.config.optimize.population_size = new_value
+
+        col_auto, col_value = st.columns([0.35, 0.65], vertical_alignment="bottom")
+        with col_auto:
+            st.checkbox(
+                "auto",
+                key=auto_key,
+                help="Store optimize.population_size as null so Passivbot can auto-size the runtime population.",
+            )
+        with col_value:
+            st.number_input(
+                "population_size",
+                min_value=1,
+                max_value=10000,
+                step=1,
+                format="%d",
+                key=size_key,
+                help=pbgui_help.population_size,
+                disabled=st.session_state.get(auto_key, False),
+            )
+        st.caption("Auto stores optimize.population_size as null. PB7 then derives the runtime population from the active backend and algorithm.")
 
     # pareto_max_size
     @st.fragment
@@ -1911,33 +1679,28 @@ class OptimizeV7Item(ConfigV7Editor):
     # scoring
     @st.fragment
     def fragment_scoring(self):
-        def _normalize_scoring_list(items):
-            if not items:
-                return []
-
+        def _normalize_metric_selection(items):
             normalized = []
-            for item in items:
-                if not isinstance(item, str):
-                    continue
-                normalized.append(canonicalize_metric_name(item))
-
-            # de-dup, preserve order
-            out = []
             seen = set()
-            for x in normalized:
-                if x not in seen:
-                    out.append(x)
-                    seen.add(x)
-            return out
+            for item in items or []:
+                metric = item.get("metric") if isinstance(item, dict) else item
+                metric = canonicalize_metric_name(metric)
+                if not metric or metric in seen:
+                    continue
+                normalized.append(metric)
+                seen.add(metric)
+            return normalized
 
         if "edit_opt_v7_scoring" in st.session_state:
-            normalized = _normalize_scoring_list(st.session_state.edit_opt_v7_scoring)
+            normalized = _normalize_metric_selection(st.session_state.edit_opt_v7_scoring)
             if normalized != st.session_state.edit_opt_v7_scoring:
                 st.session_state.edit_opt_v7_scoring = normalized
-            if normalized != self.config.optimize.scoring:
-                self.config.optimize.scoring = normalized
+            merged_scoring = merge_optimize_scoring_selection(self.config.optimize.scoring, normalized)
+            if merged_scoring != self.config.optimize.scoring:
+                self.config.optimize.scoring = merged_scoring
         else:
-            st.session_state.edit_opt_v7_scoring = _normalize_scoring_list(self.config.optimize.scoring)
+            initial_scoring = self.config.optimize.scoring or DEFAULT_OPTIMIZE_SCORING
+            st.session_state.edit_opt_v7_scoring = scoring_metric_names(initial_scoring)
 
         # Use centralized metric definitions (avoids maintaining a second list here)
         options = set(get_all_metrics_list())
@@ -2008,9 +1771,12 @@ class OptimizeV7Item(ConfigV7Editor):
             )
             updated = list(st.session_state.edit_opt_v7_scoring or [])
             updated.append(metric_to_add)
-            updated = _normalize_scoring_list(updated)
+            updated = _normalize_metric_selection(updated)
             st.session_state.edit_opt_v7_scoring = updated
-            self.config.optimize.scoring = updated
+            self.config.optimize.scoring = merge_optimize_scoring_selection(
+                self.config.optimize.scoring,
+                updated,
+            )
             st.rerun()
 
         with col_scoring:
@@ -2020,6 +1786,7 @@ class OptimizeV7Item(ConfigV7Editor):
                 key="edit_opt_v7_scoring",
                 help=pbgui_help.scoring,
             )
+            st.caption("PB7 stores scoring as explicit metric/goal pairs. Existing goals are preserved; new metrics use Passivbot's default min/max goal.")
 
     # filters
     def fragment_filter_coins(self):
@@ -3359,89 +3126,6 @@ class OptimizeV7Item(ConfigV7Editor):
                 format=step_format,
                 key="edit_opt_v7_long_filter_volume_drop_pct_step",
                 help=f"Step size for long_filter_volume_drop_pct (0 disables; min {min_step_display}))")
-
-    def _render_bound_fragment(self, bound_name: str, label: str, min_value, max_value, step, fmt, widget_step, round_digits: int, help_text=None):
-        min_step = self._min_positive_step()
-        step_format = self._step_format_from_min(round_digits, min_step, widget_step)
-        min_step_display = (step_format % min_step) if min_step else "0"
-        range_key = f"edit_opt_v7_{bound_name}"
-        step_key = f"{range_key}_step"
-        value_0 = getattr(self.config.optimize.bounds, f"{bound_name}_0")
-        value_1 = getattr(self.config.optimize.bounds, f"{bound_name}_1")
-        current_step = getattr(self.config.optimize.bounds, f"{bound_name}_step")
-
-        if range_key in st.session_state:
-            if st.session_state[range_key] != (value_0, value_1):
-                setattr(self.config.optimize.bounds, f"{bound_name}_0", st.session_state[range_key][0])
-                setattr(self.config.optimize.bounds, f"{bound_name}_1", st.session_state[range_key][1])
-        else:
-            st.session_state[range_key] = (value_0, value_1)
-
-        if step_key in st.session_state:
-            clamped = self._clamp_step_value(st.session_state[step_key], min_step)
-            if clamped != st.session_state[step_key]:
-                st.session_state[step_key] = clamped
-            if clamped != current_step:
-                setattr(self.config.optimize.bounds, f"{bound_name}_step", clamped)
-        else:
-            st.session_state[step_key] = current_step
-
-        col_slider, col_step = st.columns([5, 1])
-        with col_slider:
-            st.slider(
-                label,
-                min_value=min_value,
-                max_value=max_value,
-                step=step,
-                format=fmt,
-                key=range_key,
-                help=help_text,
-            )
-        with col_step:
-            st.number_input(
-                "step",
-                min_value=0.0,
-                step=widget_step,
-                format=step_format,
-                key=step_key,
-                help=f"Step size for {label} (0 disables; min {min_step_display})",
-            )
-
-    @st.fragment
-    def fragment_long_forager_score_weights_ema_readiness(self):
-        self._render_bound_fragment("long_forager_score_weights_ema_readiness", "long_forager_score_weights_ema_readiness", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
-
-    @st.fragment
-    def fragment_long_forager_score_weights_volatility(self):
-        self._render_bound_fragment("long_forager_score_weights_volatility", "long_forager_score_weights_volatility", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
-
-    @st.fragment
-    def fragment_long_forager_score_weights_volume(self):
-        self._render_bound_fragment("long_forager_score_weights_volume", "long_forager_score_weights_volume", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
-
-    @st.fragment
-    def fragment_long_forager_volatility_ema_span(self):
-        self._render_bound_fragment("long_forager_volatility_ema_span", "long_forager_volatility_ema_span", Bounds.FILTER_VOLATILITY_EMA_SPAN_MIN, Bounds.FILTER_VOLATILITY_EMA_SPAN_MAX, Bounds.FILTER_VOLATILITY_EMA_SPAN_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_FORMAT, Bounds.FILTER_VOLATILITY_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
-
-    @st.fragment
-    def fragment_long_forager_volume_drop_pct(self):
-        self._render_bound_fragment("long_forager_volume_drop_pct", "long_forager_volume_drop_pct", Bounds.FILTER_VOLUME_DROP_PCT_MIN, Bounds.FILTER_VOLUME_DROP_PCT_MAX, Bounds.FILTER_VOLUME_DROP_PCT_STEP, Bounds.FILTER_VOLUME_DROP_PCT_FORMAT, Bounds.FILTER_VOLUME_DROP_PCT_WIDGET_STEP, Bounds.FILTER_VOLUME_DROP_PCT_ROUND, pbgui_help.filter_volume_drop_pct)
-
-    @st.fragment
-    def fragment_long_forager_volume_ema_span(self):
-        self._render_bound_fragment("long_forager_volume_ema_span", "long_forager_volume_ema_span", Bounds.FILTER_VOLUME_EMA_SPAN_MIN, Bounds.FILTER_VOLUME_EMA_SPAN_MAX, Bounds.FILTER_VOLUME_EMA_SPAN_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_FORMAT, Bounds.FILTER_VOLUME_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
-
-    @st.fragment
-    def fragment_long_hsl_cooldown_minutes_after_red(self):
-        self._render_bound_fragment("long_hsl_cooldown_minutes_after_red", "long_hsl_cooldown_minutes_after_red", Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MIN, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MAX, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_FORMAT, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_WIDGET_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND, pbgui_help.hsl_cooldown_minutes_after_red)
-
-    @st.fragment
-    def fragment_long_hsl_ema_span_minutes(self):
-        self._render_bound_fragment("long_hsl_ema_span_minutes", "long_hsl_ema_span_minutes", Bounds.HSL_EMA_SPAN_MINUTES_MIN, Bounds.HSL_EMA_SPAN_MINUTES_MAX, Bounds.HSL_EMA_SPAN_MINUTES_STEP, Bounds.HSL_EMA_SPAN_MINUTES_FORMAT, Bounds.HSL_EMA_SPAN_MINUTES_WIDGET_STEP, Bounds.HSL_EMA_SPAN_MINUTES_ROUND, pbgui_help.hsl_ema_span_minutes)
-
-    @st.fragment
-    def fragment_long_hsl_red_threshold(self):
-        self._render_bound_fragment("long_hsl_red_threshold", "long_hsl_red_threshold", Bounds.HSL_RED_THRESHOLD_MIN, Bounds.HSL_RED_THRESHOLD_MAX, Bounds.HSL_RED_THRESHOLD_STEP, Bounds.HSL_RED_THRESHOLD_FORMAT, Bounds.HSL_RED_THRESHOLD_WIDGET_STEP, Bounds.HSL_RED_THRESHOLD_ROUND, pbgui_help.hsl_red_threshold)
     
     # long_filter_volume_ema_span
     @st.fragment
@@ -5043,42 +4727,6 @@ class OptimizeV7Item(ConfigV7Editor):
                 format=step_format,
                 key="edit_opt_v7_short_filter_volume_drop_pct_step",
                 help=f"Step size for short_filter_volume_drop_pct (0 disables; min {min_step_display})")
-
-    @st.fragment
-    def fragment_short_forager_score_weights_ema_readiness(self):
-        self._render_bound_fragment("short_forager_score_weights_ema_readiness", "short_forager_score_weights_ema_readiness", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
-
-    @st.fragment
-    def fragment_short_forager_score_weights_volatility(self):
-        self._render_bound_fragment("short_forager_score_weights_volatility", "short_forager_score_weights_volatility", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
-
-    @st.fragment
-    def fragment_short_forager_score_weights_volume(self):
-        self._render_bound_fragment("short_forager_score_weights_volume", "short_forager_score_weights_volume", Bounds.FORAGER_SCORE_WEIGHT_MIN, Bounds.FORAGER_SCORE_WEIGHT_MAX, Bounds.FORAGER_SCORE_WEIGHT_STEP, Bounds.FORAGER_SCORE_WEIGHT_FORMAT, Bounds.FORAGER_SCORE_WEIGHT_WIDGET_STEP, Bounds.FORAGER_SCORE_WEIGHT_ROUND, pbgui_help.forager_score_weights)
-
-    @st.fragment
-    def fragment_short_forager_volatility_ema_span(self):
-        self._render_bound_fragment("short_forager_volatility_ema_span", "short_forager_volatility_ema_span", Bounds.FILTER_VOLATILITY_EMA_SPAN_MIN, Bounds.FILTER_VOLATILITY_EMA_SPAN_MAX, Bounds.FILTER_VOLATILITY_EMA_SPAN_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_FORMAT, Bounds.FILTER_VOLATILITY_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLATILITY_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
-
-    @st.fragment
-    def fragment_short_forager_volume_drop_pct(self):
-        self._render_bound_fragment("short_forager_volume_drop_pct", "short_forager_volume_drop_pct", Bounds.FILTER_VOLUME_DROP_PCT_MIN, Bounds.FILTER_VOLUME_DROP_PCT_MAX, Bounds.FILTER_VOLUME_DROP_PCT_STEP, Bounds.FILTER_VOLUME_DROP_PCT_FORMAT, Bounds.FILTER_VOLUME_DROP_PCT_WIDGET_STEP, Bounds.FILTER_VOLUME_DROP_PCT_ROUND, pbgui_help.filter_volume_drop_pct)
-
-    @st.fragment
-    def fragment_short_forager_volume_ema_span(self):
-        self._render_bound_fragment("short_forager_volume_ema_span", "short_forager_volume_ema_span", Bounds.FILTER_VOLUME_EMA_SPAN_MIN, Bounds.FILTER_VOLUME_EMA_SPAN_MAX, Bounds.FILTER_VOLUME_EMA_SPAN_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_FORMAT, Bounds.FILTER_VOLUME_EMA_SPAN_WIDGET_STEP, Bounds.FILTER_VOLUME_EMA_SPAN_ROUND, pbgui_help.filter_ema_span)
-
-    @st.fragment
-    def fragment_short_hsl_cooldown_minutes_after_red(self):
-        self._render_bound_fragment("short_hsl_cooldown_minutes_after_red", "short_hsl_cooldown_minutes_after_red", Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MIN, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_MAX, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_FORMAT, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_WIDGET_STEP, Bounds.HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND, pbgui_help.hsl_cooldown_minutes_after_red)
-
-    @st.fragment
-    def fragment_short_hsl_ema_span_minutes(self):
-        self._render_bound_fragment("short_hsl_ema_span_minutes", "short_hsl_ema_span_minutes", Bounds.HSL_EMA_SPAN_MINUTES_MIN, Bounds.HSL_EMA_SPAN_MINUTES_MAX, Bounds.HSL_EMA_SPAN_MINUTES_STEP, Bounds.HSL_EMA_SPAN_MINUTES_FORMAT, Bounds.HSL_EMA_SPAN_MINUTES_WIDGET_STEP, Bounds.HSL_EMA_SPAN_MINUTES_ROUND, pbgui_help.hsl_ema_span_minutes)
-
-    @st.fragment
-    def fragment_short_hsl_red_threshold(self):
-        self._render_bound_fragment("short_hsl_red_threshold", "short_hsl_red_threshold", Bounds.HSL_RED_THRESHOLD_MIN, Bounds.HSL_RED_THRESHOLD_MAX, Bounds.HSL_RED_THRESHOLD_STEP, Bounds.HSL_RED_THRESHOLD_FORMAT, Bounds.HSL_RED_THRESHOLD_WIDGET_STEP, Bounds.HSL_RED_THRESHOLD_ROUND, pbgui_help.hsl_red_threshold)
     # short_filter_volume_ema_span
     @st.fragment
     def fragment_short_filter_volume_ema_span(self):
@@ -6841,7 +6489,7 @@ class OptimizeV7Item(ConfigV7Editor):
             self.fragment_btc_collateral_cap()
         with col6:
             self.fragment_btc_collateral_ltv_cap()
-        col1, col2, col3, col4, col5, col6, col7 = st.columns([1,1,0.5,0.5,0.5,0.5,0.5], vertical_alignment="bottom")
+        col1, col2, col3, col4, col5, col6 = st.columns([1,1,0.5,0.5,0.5,0.5], vertical_alignment="bottom")
         with col1:
             self.fragment_starting_balance()
         with col2:
@@ -6849,40 +6497,18 @@ class OptimizeV7Item(ConfigV7Editor):
         with col3:
             self.fragment_n_cpus()
         with col4:
-            self.fragment_round_to_n_significant_digits()
-        with col5:
             self.fragment_logging()
-        with col6:
+        with col5:
             self.fragment_starting_config()
-        with col7:
+        with col6:
             self.fragment_compress_results_file()
             self.fragment_write_all_results()
 
-        col1, col2 = st.columns([2, 1], vertical_alignment="bottom")
-        with col1:
-            self.fragment_starting_config_path()
-
-        col1, col2, col3 = st.columns([2, 0.5, 1.0], vertical_alignment="bottom")
+        col1, col2, col3 = st.columns([2, 0.5, 1.5])
         with col1:
             self.fragment_ohlcv_source_dir()
         with col2:
             self.fragment_candle_interval_minutes()
-        with col3:
-            self.fragment_hedge_mode()
-        col1, col2, col3 = st.columns([1, 1, 1], vertical_alignment="bottom")
-        with col1:
-            self.fragment_liquidation_threshold()
-        with col2:
-            self.fragment_market_order_slippage_pct()
-        with col3:
-            self.fragment_market_order_near_touch_threshold()
-        col1, col2, col3 = st.columns([1, 1, 1], vertical_alignment="bottom")
-        with col1:
-            self.fragment_margin_mode_preference()
-        with col2:
-            self.fragment_hsl_signal_mode()
-        with col3:
-            self.fragment_hsl_position_during_cooldown_policy()
         
         # Coin Sources - full width for better layout consistency with scenarios
         self.fragment_coin_sources()
@@ -6949,15 +6575,10 @@ class OptimizeV7Item(ConfigV7Editor):
                 self.fragment_long_entry_trailing_threshold_volatility_weight()
                 self.fragment_long_entry_trailing_threshold_we_weight()
                 self.fragment_long_entry_volatility_ema_span_hours()
-                self.fragment_long_forager_score_weights_ema_readiness()
-                self.fragment_long_forager_score_weights_volatility()
-                self.fragment_long_forager_score_weights_volume()
-                self.fragment_long_forager_volatility_ema_span()
-                self.fragment_long_forager_volume_drop_pct()
-                self.fragment_long_forager_volume_ema_span()
-                self.fragment_long_hsl_cooldown_minutes_after_red()
-                self.fragment_long_hsl_ema_span_minutes()
-                self.fragment_long_hsl_red_threshold()
+                self.fragment_long_filter_volatility_drop_pct()
+                self.fragment_long_filter_volatility_ema_span()
+                self.fragment_long_filter_volume_drop_pct()
+                self.fragment_long_filter_volume_ema_span()
                 self.fragment_long_n_positions()
                 self.fragment_long_risk_twel_enforcer_threshold()
                 self.fragment_long_risk_we_excess_allowance_pct()
@@ -6995,15 +6616,10 @@ class OptimizeV7Item(ConfigV7Editor):
                 self.fragment_short_entry_trailing_threshold_volatility_weight()
                 self.fragment_short_entry_trailing_threshold_we_weight()
                 self.fragment_short_entry_volatility_ema_span_hours()
-                self.fragment_short_forager_score_weights_ema_readiness()
-                self.fragment_short_forager_score_weights_volatility()
-                self.fragment_short_forager_score_weights_volume()
-                self.fragment_short_forager_volatility_ema_span()
-                self.fragment_short_forager_volume_drop_pct()
-                self.fragment_short_forager_volume_ema_span()
-                self.fragment_short_hsl_cooldown_minutes_after_red()
-                self.fragment_short_hsl_ema_span_minutes()
-                self.fragment_short_hsl_red_threshold()
+                self.fragment_short_filter_volatility_drop_pct()
+                self.fragment_short_filter_volatility_ema_span()
+                self.fragment_short_filter_volume_drop_pct()
+                self.fragment_short_filter_volume_ema_span()
                 self.fragment_short_n_positions()
                 self.fragment_short_risk_twel_enforcer_threshold()
                 self.fragment_short_risk_we_excess_allowance_pct()

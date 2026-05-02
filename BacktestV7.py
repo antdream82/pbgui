@@ -11,14 +11,13 @@ import configparser
 import time
 import multiprocessing
 import pandas as pd
-from pbgui_func import PBGDIR, pb7dir, pb7venv, validateJSON, load_symbols_from_ini, error_popup, info_popup, get_navi_paths, replace_special_chars, render_log_viewer
+from pbgui_func import PBGDIR, pb7dir, pb7venv, validateJSON, load_symbols_from_ini, error_popup, info_popup, get_navi_paths, replace_special_chars, render_log_viewer, redirect_to_fastapi_v7_edit_draft
 from pbgui_purefunc import config_pretty_str, pb7_suite_preflight_errors
 from pbgui_purefunc import load_ini, save_ini
 from PBCoinData import CoinData, normalize_symbol
 import uuid
-from Base import Base
 from Exchange import Exchange, V7
-from Config import Config, ConfigV7, BalanceCalculator, Logging, ConfigV7Editor
+from Config import ConfigV7, BalanceCalculator, Logging, ConfigV7Editor
 from pathlib import Path, PurePath
 from shutil import rmtree, copytree
 import shutil
@@ -771,84 +770,6 @@ class BacktestV7Item(ConfigV7Editor):
             st.session_state.edit_bt_v7_filter_by_min_effective_cost = self.config.backtest.filter_by_min_effective_cost
         st.checkbox("filter_by_min_effective_cost", key="edit_bt_v7_filter_by_min_effective_cost", help=pbgui_help.bt_filter_by_min_effective_cost)
 
-    # hedge_mode
-    @st.fragment
-    def fragment_hedge_mode(self):
-        if "edit_bt_v7_hedge_mode" in st.session_state:
-            if st.session_state.edit_bt_v7_hedge_mode != self.config.live.hedge_mode:
-                self.config.live.hedge_mode = st.session_state.edit_bt_v7_hedge_mode
-        else:
-            st.session_state.edit_bt_v7_hedge_mode = self.config.live.hedge_mode
-        st.checkbox("hedge_mode", key="edit_bt_v7_hedge_mode", help=pbgui_help.hedge_mode)
-
-    @st.fragment
-    def fragment_liquidation_threshold(self):
-        key = "edit_bt_v7_liquidation_threshold"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.backtest.liquidation_threshold:
-                self.config.backtest.liquidation_threshold = st.session_state[key]
-        else:
-            st.session_state[key] = float(self.config.backtest.liquidation_threshold)
-        st.number_input("liquidation_threshold", min_value=0.0, max_value=0.999999, step=0.01, key=key, help=pbgui_help.liquidation_threshold)
-
-    @st.fragment
-    def fragment_market_order_slippage_pct(self):
-        key = "edit_bt_v7_market_order_slippage_pct"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.backtest.market_order_slippage_pct:
-                self.config.backtest.market_order_slippage_pct = st.session_state[key]
-        else:
-            st.session_state[key] = float(self.config.backtest.market_order_slippage_pct)
-        st.number_input("market_order_slippage_pct", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_slippage_pct)
-
-    @st.fragment
-    def fragment_market_order_near_touch_threshold(self):
-        key = "edit_bt_v7_market_order_near_touch_threshold"
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.market_order_near_touch_threshold:
-                self.config.live.market_order_near_touch_threshold = st.session_state[key]
-        else:
-            st.session_state[key] = float(self.config.live.market_order_near_touch_threshold)
-        st.number_input("market_order_near_touch_threshold", min_value=0.0, step=0.0001, format="%.6f", key=key, help=pbgui_help.market_order_near_touch_threshold)
-
-    @st.fragment
-    def fragment_margin_mode_preference(self):
-        key = "edit_bt_v7_margin_mode_preference"
-        options = ["cross", "isolated", "auto", "auto_cross", "auto_isolated"]
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.margin_mode_preference:
-                self.config.live.margin_mode_preference = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.live.margin_mode_preference
-        st.selectbox("margin_mode_preference", options, key=key, help=pbgui_help.margin_mode_preference)
-
-    @st.fragment
-    def fragment_hsl_signal_mode(self):
-        key = "edit_bt_v7_hsl_signal_mode"
-        options = ["pside", "unified"]
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.hsl_signal_mode:
-                self.config.live.hsl_signal_mode = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.live.hsl_signal_mode
-        st.selectbox("hsl_signal_mode", options, key=key, help=pbgui_help.hsl_signal_mode)
-
-    @st.fragment
-    def fragment_hsl_position_during_cooldown_policy(self):
-        key = "edit_bt_v7_hsl_position_during_cooldown_policy"
-        options = ["panic", "normal", "manual", "tp_only", "graceful_stop"]
-        if key in st.session_state:
-            if st.session_state[key] != self.config.live.hsl_position_during_cooldown_policy:
-                self.config.live.hsl_position_during_cooldown_policy = st.session_state[key]
-        else:
-            st.session_state[key] = self.config.live.hsl_position_during_cooldown_policy
-        st.selectbox(
-            "hsl_position_during_cooldown_policy",
-            options,
-            key=key,
-            help=pbgui_help.hsl_position_during_cooldown_policy,
-        )
-
     # compress_cache
     @st.fragment
     def fragment_compress_cache(self):
@@ -1420,7 +1341,7 @@ class BacktestV7Item(ConfigV7Editor):
         with col2:
             self.fragment_market_settings_sources()
         # Backtest Options
-        col1, col2, col3, col4, col5 = st.columns([1,1,1,1,1])
+        col1, col2, col3, col4 = st.columns([1,1,1,1])
         with col1:
             self.fragment_compress_cache()
         with col2:
@@ -1429,22 +1350,6 @@ class BacktestV7Item(ConfigV7Editor):
             self.fragment_maker_fee_override()
         with col4:
             self.fragment_volume_normalization()
-        with col5:
-            self.fragment_hedge_mode()
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            self.fragment_liquidation_threshold()
-        with col2:
-            self.fragment_market_order_slippage_pct()
-        with col3:
-            self.fragment_market_order_near_touch_threshold()
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            self.fragment_margin_mode_preference()
-        with col2:
-            self.fragment_hsl_signal_mode()
-        with col3:
-            self.fragment_hsl_position_during_cooldown_policy()
         # coin_sources (full width)
         self.fragment_coin_sources()
         # Suite (multi-scenario)
@@ -1742,12 +1647,24 @@ class BacktestV7Result:
         self._has_timeseries_data = has_data
         return has_data
 
+    def _has_fills_data(self) -> bool:
+        """Return True only if fills files contain at least one data row."""
+        fills_csv = Path(f'{self.result_path}/fills.csv')
+        fills_gz = Path(f'{self.result_path}/fills.csv.gz')
+        return (
+            self._result_file_has_data_rows(fills_csv)
+            or self._result_file_has_data_rows(fills_gz, is_gzip=True)
+        )
+
     def is_liquidated(self) -> bool:
         """Return True if the backtest ended in liquidation.
 
         The analysis writes `equity_balance_diff_neg_max` as the maximum negative
         relative difference between equity and balance. If this value is >= 1.0
         the account reached zero (or worse) and can be considered liquidated.
+
+        A backtest with no fills at all cannot be liquidated (equity_balance_diff_neg_max
+        is set to 1.0 as a default by the Rust analyzer when there are no trades).
         """
         try:
             if self.equity_balance_diff_neg_max is None:
@@ -1755,9 +1672,9 @@ class BacktestV7Result:
             if float(self.equity_balance_diff_neg_max) < 1.0:
                 return False
 
-            # Guard against degenerate result artifacts where analysis exists but
-            # fills/balance files contain headers only (no actual time-series rows).
-            return self._has_nonempty_timeseries_data()
+            # A liquidation requires fills. If no fills exist the 1.0 value is
+            # a default from the Rust analyzer (no-trade backtest), not a real liquidation.
+            return self._has_fills_data()
         except Exception:
             return False
     
@@ -2782,11 +2699,9 @@ class BacktestV7Results:
         for row in ed["edited_rows"]:
             if "Select" in ed["edited_rows"][row]:
                 if ed["edited_rows"][row]["Select"]:
-                    st.session_state.edit_v7_instance = V7Instance()
                     self.results_d[row]["index"].ensure_config_loaded()
-                    st.session_state.edit_v7_instance.config = self.results_d[row]["index"].config
-                    st.session_state.edit_v7_instance.user = st.session_state.edit_v7_instance.config.live.user
-                    st.switch_page(get_navi_paths()["V7_RUN"])
+                    config_dict = self.results_d[row]["index"].config.config
+                    redirect_to_fastapi_v7_edit_draft(config_dict)
 
     def add_to_config_archive(self):
         ed_key = st.session_state.ed_key

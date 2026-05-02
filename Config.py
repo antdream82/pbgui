@@ -1,6 +1,9 @@
 import streamlit as st
 from pathlib import Path
 import json
+import shutil
+import os
+from copy import deepcopy
 from pbgui_func import validateJSON, error_popup
 from pbgui_purefunc import config_pretty_str, pb7_suite_preflight_errors
 import pbgui_help
@@ -86,6 +89,23 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=False,
         weighted_variant="mdg_pnl_w",
         description="Median of daily realized PnL ratios (collateral-agnostic) and weighted variant.",
+    ),
+    "gain_strategy_pnl_rebased": MetricDef(
+        group="Returns & Growth",
+        has_currency=False,
+        description="Terminal gain on the strategy-PnL rebased equity curve.",
+    ),
+    "adg_strategy_pnl_rebased": MetricDef(
+        group="Returns & Growth",
+        has_currency=False,
+        weighted_variant="adg_strategy_pnl_rebased_w",
+        description="Collateral-agnostic geometric growth on the strategy-PnL rebased equity curve and weighted variant.",
+    ),
+    "mdg_strategy_pnl_rebased": MetricDef(
+        group="Returns & Growth",
+        has_currency=False,
+        weighted_variant="mdg_strategy_pnl_rebased_w",
+        description="Median-day growth on the strategy-PnL rebased equity curve and weighted variant.",
     ),
     "adg_per_exposure_long": MetricDef(
         group="Returns & Growth",
@@ -194,6 +214,11 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=True,
         description="Average of worst 1% daily losses (CVaR).",
     ),
+    "expected_shortfall_1pct_strategy_pnl_rebased": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="CVaR on the strategy-PnL rebased equity curve.",
+    ),
     "equity_balance_diff_neg_max": MetricDef(
         group="Risk Metrics",
         has_currency=True,
@@ -213,6 +238,61 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         group="Risk Metrics",
         has_currency=True,
         description="Average positive (equity-balance)/balance divergence.",
+    ),
+    "drawdown_worst_hsl": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Worst account-level hard-stop-loss drawdown.",
+    ),
+    "drawdown_worst_ema_hsl": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Worst EMA-smoothed hard-stop-loss drawdown.",
+    ),
+    "drawdown_worst_mean_1pct_hsl": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Mean of the worst 1% hard-stop-loss drawdown samples.",
+    ),
+    "drawdown_worst_mean_1pct_ema_hsl": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Mean of the worst 1% EMA-smoothed hard-stop-loss drawdown samples.",
+    ),
+    "trade_loss_max": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Largest single losing trade.",
+    ),
+    "trade_loss_mean": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Mean losing trade size.",
+    ),
+    "trade_loss_median": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Median losing trade size.",
+    ),
+    "hard_stop_halt_to_restart_equity_loss_pct": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Equity loss between hard-stop halt and restart.",
+    ),
+    "hard_stop_trigger_drawdown_mean": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Mean drawdown at hard-stop trigger time.",
+    ),
+    "hard_stop_panic_close_loss_sum": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Total realized loss from hard-stop panic closes.",
+    ),
+    "hard_stop_panic_close_loss_max": MetricDef(
+        group="Risk Metrics",
+        has_currency=False,
+        description="Largest realized loss from a hard-stop panic close.",
     ),
 
     # Ratios & Efficiency
@@ -262,30 +342,6 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         weighted_variant="loss_profit_ratio_w",
         description="Loss-to-profit efficiency ratio (plus weighted variant).",
     ),
-    "paper_loss_ratio": MetricDef(
-        group="Ratios & Efficiency",
-        has_currency=False,
-        weighted_variant="paper_loss_ratio_w",
-        description="ADG divided by the worst absolute negative equity-vs-balance gap (plus weighted variant).",
-    ),
-    "paper_loss_mean_ratio": MetricDef(
-        group="Ratios & Efficiency",
-        has_currency=False,
-        weighted_variant="paper_loss_mean_ratio_w",
-        description="ADG divided by the mean absolute negative equity-vs-balance gap (plus weighted variant).",
-    ),
-    "exposure_ratio": MetricDef(
-        group="Ratios & Efficiency",
-        has_currency=False,
-        weighted_variant="exposure_ratio_w",
-        description="ADG divided by the maximum absolute recorded wallet exposure (plus weighted variant).",
-    ),
-    "exposure_mean_ratio": MetricDef(
-        group="Ratios & Efficiency",
-        has_currency=False,
-        weighted_variant="exposure_mean_ratio_w",
-        description="ADG divided by the mean absolute recorded wallet exposure (plus weighted variant).",
-    ),
     "sharpe_ratio_pnl": MetricDef(
         group="Ratios & Efficiency",
         has_currency=False,
@@ -297,6 +353,66 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=False,
         weighted_variant="sortino_ratio_pnl_w",
         description="Sortino ratio computed on realized daily PnL ratios (plus weighted variant).",
+    ),
+    "sharpe_ratio_strategy_pnl_rebased": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="sharpe_ratio_strategy_pnl_rebased_w",
+        description="Sharpe ratio on the strategy-PnL rebased equity curve and weighted variant.",
+    ),
+    "sortino_ratio_strategy_pnl_rebased": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="sortino_ratio_strategy_pnl_rebased_w",
+        description="Sortino ratio on the strategy-PnL rebased equity curve and weighted variant.",
+    ),
+    "omega_ratio_strategy_pnl_rebased": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="omega_ratio_strategy_pnl_rebased_w",
+        description="Omega ratio on the strategy-PnL rebased equity curve and weighted variant.",
+    ),
+    "sterling_ratio_strategy_pnl_rebased": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="sterling_ratio_strategy_pnl_rebased_w",
+        description="Sterling ratio on the strategy-PnL rebased equity curve and weighted variant.",
+    ),
+    "calmar_ratio_strategy_pnl_rebased": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="calmar_ratio_strategy_pnl_rebased_w",
+        description="Calmar ratio on the strategy-PnL rebased equity curve and weighted variant.",
+    ),
+    "paper_loss_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        weighted_variant="paper_loss_ratio_w",
+        description="Paper-loss ratio and weighted variant.",
+    ),
+    "paper_loss_mean_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        weighted_variant="paper_loss_mean_ratio_w",
+        description="Mean paper-loss ratio and weighted variant.",
+    ),
+    "exposure_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        weighted_variant="exposure_ratio_w",
+        description="Exposure efficiency ratio and weighted variant.",
+    ),
+    "exposure_mean_ratio": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        weighted_variant="exposure_mean_ratio_w",
+        description="Mean exposure efficiency ratio and weighted variant.",
+    ),
+    "win_rate": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        weighted_variant="win_rate_w",
+        description="Fraction of profitable trades and weighted variant.",
     ),
 
     # Position & Execution Metrics
@@ -332,27 +448,6 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         weighted_variant="volume_pct_per_day_avg_w",
         description="Average daily traded volume as % of balance (plus weighted variant).",
     ),
-    "win_rate": MetricDef(
-        group="Position & Execution Metrics",
-        has_currency=False,
-        weighted_variant="win_rate_w",
-        description="Fraction of completed trades with positive net realized PnL (plus weighted variant).",
-    ),
-    "trade_loss_max": MetricDef(
-        group="Position & Execution Metrics",
-        has_currency=False,
-        description="Worst completed-trade loss as a fraction of account balance at trade open.",
-    ),
-    "trade_loss_mean": MetricDef(
-        group="Position & Execution Metrics",
-        has_currency=False,
-        description="Mean losing-trade loss fraction relative to account balance at trade open.",
-    ),
-    "trade_loss_median": MetricDef(
-        group="Position & Execution Metrics",
-        has_currency=False,
-        description="Median losing-trade loss fraction relative to account balance at trade open.",
-    ),
     "peak_recovery_hours_equity": MetricDef(
         group="Position & Execution Metrics",
         has_currency=True,
@@ -362,6 +457,71 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         group="Position & Execution Metrics",
         has_currency=False,
         description="Longest time until cumulative realized PnL makes a new peak (hours).",
+    ),
+    "peak_recovery_hours_hsl": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Longest time below the rebased hard-stop-loss peak before recovery (hours).",
+    ),
+    "backtest_completion_ratio": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Fraction of the requested backtest window completed before an early stop.",
+    ),
+    "hard_stop_triggers_per_year": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Annualized number of hard-stop triggers.",
+    ),
+    "hard_stop_restarts_per_year": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Annualized number of hard-stop restarts.",
+    ),
+    "hard_stop_restarts_per_year_long": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Annualized number of hard-stop restarts on the long side.",
+    ),
+    "hard_stop_restarts_per_year_short": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Annualized number of hard-stop restarts on the short side.",
+    ),
+    "hard_stop_time_in_yellow_pct": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Share of time spent in the hard-stop yellow tier.",
+    ),
+    "hard_stop_time_in_orange_pct": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Share of time spent in the hard-stop orange tier.",
+    ),
+    "hard_stop_time_in_red_pct": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Share of time spent in the hard-stop red tier.",
+    ),
+    "hard_stop_duration_minutes_mean": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Mean hard-stop halt duration in minutes.",
+    ),
+    "hard_stop_duration_minutes_max": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Maximum hard-stop halt duration in minutes.",
+    ),
+    "hard_stop_flatten_time_minutes_mean": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Mean minutes from hard-stop trigger to fully flat.",
+    ),
+    "hard_stop_post_restart_retrigger_pct": MetricDef(
+        group="Position & Execution Metrics",
+        has_currency=False,
+        description="Share of hard-stop restarts that retrigger soon after restart.",
     ),
 
     # Equity Curve Quality
@@ -697,6 +857,222 @@ def canonicalize_metric_name(metric: str) -> str:
 
     return metric
 
+
+OPTIMIZE_BACKENDS = ("deap", "pymoo")
+OPTIMIZE_OBJECTIVE_GOALS = ("min", "max")
+
+# Mirrors pb7/src/config/scoring.py so PBGui can preserve canonical scoring
+# objects before the full FastAPI optimize editor is in place.
+DEFAULT_OBJECTIVE_GOALS: dict[str, str] = {
+    "positions_held_per_day": "min",
+    "positions_held_per_day_w": "min",
+    "position_held_hours_mean": "min",
+    "position_held_hours_max": "min",
+    "position_held_hours_median": "min",
+    "position_unchanged_hours_max": "min",
+    "high_exposure_hours_mean_long": "min",
+    "high_exposure_hours_max_long": "min",
+    "high_exposure_hours_mean_short": "min",
+    "high_exposure_hours_max_short": "min",
+    "adg_pnl": "max",
+    "adg_pnl_w": "max",
+    "gain_strategy_pnl_rebased": "max",
+    "adg_strategy_pnl_rebased": "max",
+    "mdg_strategy_pnl_rebased": "max",
+    "sharpe_ratio_strategy_pnl_rebased": "max",
+    "sortino_ratio_strategy_pnl_rebased": "max",
+    "omega_ratio_strategy_pnl_rebased": "max",
+    "expected_shortfall_1pct_strategy_pnl_rebased": "min",
+    "calmar_ratio_strategy_pnl_rebased": "max",
+    "sterling_ratio_strategy_pnl_rebased": "max",
+    "adg_strategy_pnl_rebased_w": "max",
+    "mdg_strategy_pnl_rebased_w": "max",
+    "sharpe_ratio_strategy_pnl_rebased_w": "max",
+    "sortino_ratio_strategy_pnl_rebased_w": "max",
+    "omega_ratio_strategy_pnl_rebased_w": "max",
+    "calmar_ratio_strategy_pnl_rebased_w": "max",
+    "sterling_ratio_strategy_pnl_rebased_w": "max",
+    "drawdown_worst_hsl": "min",
+    "drawdown_worst_mean_1pct_hsl": "min",
+    "peak_recovery_hours_hsl": "min",
+    "mdg_pnl": "max",
+    "mdg_pnl_w": "max",
+    "sharpe_ratio_pnl": "max",
+    "sharpe_ratio_pnl_w": "max",
+    "sortino_ratio_pnl": "max",
+    "sortino_ratio_pnl_w": "max",
+    "adg": "max",
+    "adg_per_exposure_long": "max",
+    "adg_per_exposure_short": "max",
+    "adg_w": "max",
+    "adg_w_per_exposure_long": "max",
+    "adg_w_per_exposure_short": "max",
+    "calmar_ratio": "max",
+    "calmar_ratio_w": "max",
+    "drawdown_worst": "min",
+    "drawdown_worst_mean_1pct": "min",
+    "equity_balance_diff_neg_max": "min",
+    "equity_balance_diff_neg_mean": "min",
+    "equity_balance_diff_pos_max": "min",
+    "equity_balance_diff_pos_mean": "min",
+    "paper_loss_ratio": "max",
+    "paper_loss_mean_ratio": "max",
+    "exposure_ratio": "max",
+    "exposure_mean_ratio": "max",
+    "equity_choppiness": "min",
+    "equity_choppiness_w": "min",
+    "equity_jerkiness": "min",
+    "equity_jerkiness_w": "min",
+    "peak_recovery_hours_equity": "min",
+    "expected_shortfall_1pct": "min",
+    "exponential_fit_error": "min",
+    "exponential_fit_error_w": "min",
+    "gain": "max",
+    "gain_per_exposure_long": "max",
+    "gain_per_exposure_short": "max",
+    "loss_profit_ratio": "min",
+    "loss_profit_ratio_w": "min",
+    "mdg": "max",
+    "mdg_per_exposure_long": "max",
+    "mdg_per_exposure_short": "max",
+    "mdg_w": "max",
+    "mdg_w_per_exposure_long": "max",
+    "mdg_w_per_exposure_short": "max",
+    "omega_ratio": "max",
+    "omega_ratio_w": "max",
+    "sharpe_ratio": "max",
+    "sharpe_ratio_w": "max",
+    "sortino_ratio": "max",
+    "sortino_ratio_w": "max",
+    "sterling_ratio": "max",
+    "sterling_ratio_w": "max",
+    "paper_loss_ratio_w": "max",
+    "paper_loss_mean_ratio_w": "max",
+    "exposure_ratio_w": "max",
+    "exposure_mean_ratio_w": "max",
+    "total_wallet_exposure_max": "min",
+    "total_wallet_exposure_mean": "min",
+    "total_wallet_exposure_median": "min",
+    "volume_pct_per_day_avg": "max",
+    "volume_pct_per_day_avg_w": "max",
+    "entry_initial_balance_pct_long": "max",
+    "entry_initial_balance_pct_short": "max",
+}
+
+DEFAULT_OPTIMIZE_FIXED_RUNTIME_OVERRIDES = {
+    "bot.long.hsl_no_restart_drawdown_threshold": 1,
+    "bot.short.hsl_no_restart_drawdown_threshold": 1,
+}
+
+DEFAULT_OPTIMIZE_SCORING = [
+    {"metric": "adg_strategy_pnl_rebased", "goal": "max"},
+    {"metric": "adg_strategy_pnl_rebased_w", "goal": "max"},
+    {"metric": "mdg_strategy_pnl_rebased", "goal": "max"},
+    {"metric": "mdg_strategy_pnl_rebased_w", "goal": "max"},
+    {"metric": "peak_recovery_hours_hsl", "goal": "min"},
+    {"metric": "position_held_hours_max", "goal": "min"},
+    {"metric": "drawdown_worst_hsl", "goal": "min"},
+    {"metric": "drawdown_worst_mean_1pct_hsl", "goal": "min"},
+]
+
+DEFAULT_OPTIMIZE_PYMOO = {
+    "algorithm": "auto",
+    "shared": {
+        "crossover_eta": 20,
+        "crossover_prob_var": 0.5,
+        "eliminate_duplicates": True,
+        "mutation_eta": 20,
+        "mutation_prob_var": "auto",
+    },
+    "algorithms": {
+        "nsga2": {},
+        "nsga3": {
+            "ref_dirs": {
+                "method": "das_dennis",
+                "n_partitions": "auto",
+            }
+        },
+    },
+}
+
+
+def default_objective_goal(metric: str) -> str | None:
+    canonical = canonicalize_metric_name(metric)
+    goal = DEFAULT_OBJECTIVE_GOALS.get(canonical) or DEFAULT_OBJECTIVE_GOALS.get(str(metric).strip())
+    if goal is not None:
+        return goal
+    if isinstance(canonical, str) and canonical.endswith(("_usd", "_btc")):
+        return DEFAULT_OBJECTIVE_GOALS.get(canonical.rsplit("_", 1)[0])
+    return None
+
+
+def normalize_optimize_scoring_entries(
+    scoring,
+    *,
+    dedupe: bool = True,
+    unknown_goal: str = "min",
+) -> list[dict[str, str]]:
+    if scoring is None:
+        return []
+    if not isinstance(scoring, (list, tuple)):
+        return []
+
+    fallback_goal = unknown_goal if unknown_goal in OPTIMIZE_OBJECTIVE_GOALS else "min"
+    normalized: list[dict[str, str]] = []
+    seen_metrics: set[str] = set()
+
+    for item in scoring:
+        metric = ""
+        goal = None
+
+        if isinstance(item, str):
+            metric = canonicalize_metric_name(item.strip())
+            goal = default_objective_goal(metric) or fallback_goal
+        elif isinstance(item, dict):
+            metric = canonicalize_metric_name(str(item.get("metric", "")).strip())
+            raw_goal = item.get("goal")
+            if raw_goal is None:
+                goal = default_objective_goal(metric) or fallback_goal
+            else:
+                goal = str(raw_goal).strip().lower()
+        else:
+            continue
+
+        if not metric:
+            continue
+        if goal not in OPTIMIZE_OBJECTIVE_GOALS:
+            goal = default_objective_goal(metric) or fallback_goal
+        if dedupe and metric in seen_metrics:
+            continue
+
+        normalized.append({"metric": metric, "goal": goal})
+        seen_metrics.add(metric)
+
+    return normalized
+
+
+def scoring_metric_names(scoring) -> list[str]:
+    return [entry["metric"] for entry in normalize_optimize_scoring_entries(scoring, dedupe=False)]
+
+
+def merge_optimize_scoring_selection(existing_scoring, selected_metrics) -> list[dict[str, str]]:
+    goal_by_metric = {
+        entry["metric"]: entry["goal"]
+        for entry in normalize_optimize_scoring_entries(existing_scoring, dedupe=False)
+    }
+    merged: list[dict[str, str]] = []
+    seen_metrics: set[str] = set()
+
+    for metric in selected_metrics or []:
+        canonical = canonicalize_metric_name(metric)
+        if not canonical or canonical in seen_metrics:
+            continue
+        goal = goal_by_metric.get(canonical) or default_objective_goal(canonical) or "min"
+        merged.append({"metric": canonical, "goal": goal})
+        seen_metrics.add(canonical)
+
+    return merged
+
 # ============================================================================
 # Bot Parameter Overrides
 # ============================================================================
@@ -735,632 +1111,6 @@ ALLOWED_OVERRIDES = [
     "unstuck_threshold",
     "wallet_exposure_limit",  # Note: pbgui uses total_wallet_exposure_limit internally
 ]
-
-class Config:
-    def __init__(self, file_name = None, config = None):
-        self._config_file = file_name
-        self._long_we = 1.0
-        self._short_we = 1.0
-        self._long_enabled = True
-        self._short_enabled = False
-        self._type = None
-        self._preview_grid = False
-        self._config_v7 = ConfigV7()
-        self._config_v7.bot.long.n_positions = 1.0
-        self._config_v7.bot.short.n_positions = 1.0
-        if config:
-            self.config = config
-        else:
-            self._config = None
-
-    @property
-    def type(self): return self._type
-
-    @property
-    def config_file(self): return self._config_file
-
-    @config_file.setter
-    def config_file(self, new_config_file):
-        if self._config_file != new_config_file:
-            self._config_file = new_config_file
-        
-    @property
-    def config(self): return self._config
-
-    @property
-    def config_v7(self):
-        if self._config:
-            # Check if config is a recursive grid config
-            config = json.loads(self._config)
-            if "long" in config:
-                if not "ddown_factor" in config["long"]:
-                    return None
-            # long settings
-            self._config_v7.bot.long.close_grid_markup_start = json.loads(self._config)["long"]["min_markup"] + json.loads(self._config)["long"]["markup_range"]
-            self._config_v7.bot.long.close_grid_markup_end = json.loads(self._config)["long"]["min_markup"]
-            self._config_v7.bot.long.close_grid_qty_pct = 1.0 / float(json.loads(self._config)["long"]["n_close_orders"])
-            self._config_v7.bot.long.close_trailing_grid_ratio = 0
-            self._config_v7.bot.long.close_trailing_qty_pct = 1
-            self._config_v7.bot.long.close_trailing_retracement_pct = 0
-            self._config_v7.bot.long.close_trailing_threshold_pct = 0
-            self._config_v7.bot.long.ema_span_0 = json.loads(self._config)["long"]["ema_span_0"]
-            self._config_v7.bot.long.ema_span_1 = json.loads(self._config)["long"]["ema_span_1"]
-            self._config_v7.bot.long.entry_grid_double_down_factor = json.loads(self._config)["long"]["ddown_factor"]
-            self._config_v7.bot.long.entry_grid_spacing_pct = json.loads(self._config)["long"]["rentry_pprice_dist"]
-            self._config_v7.bot.long.entry_grid_spacing_weight = json.loads(self._config)["long"]["rentry_pprice_dist_wallet_exposure_weighting"]
-            self._config_v7.bot.long.entry_initial_ema_dist = json.loads(self._config)["long"]["initial_eprice_ema_dist"]
-            self._config_v7.bot.long.entry_initial_qty_pct = json.loads(self._config)["long"]["initial_qty_pct"]
-            self._config_v7.bot.long.entry_trailing_grid_ratio = 0
-            self._config_v7.bot.long.entry_trailing_retracement_pct = 0
-            self._config_v7.bot.long.entry_trailing_threshold_pct = 0
-            self._config_v7.bot.long.entry_trailing_double_down_factor = 0
-            # self._config_v7.bot.long.total_wallet_exposure_limit = json.loads(self._config)["long"]["wallet_exposure_limit"]
-            try:
-                self._config_v7.bot.long.unstuck_close_pct = json.loads(self._config)["long"]["auto_unstuck_qty_pct"]
-            except:
-                self._config_v7.bot.long.unstuck_close_pct = 0.025
-            self._config_v7.bot.long.unstuck_ema_dist = json.loads(self._config)["long"]["auto_unstuck_ema_dist"]
-            # short settings
-            self._config_v7.bot.short.close_grid_markup_start = json.loads(self._config)["short"]["min_markup"] + json.loads(self._config)["short"]["markup_range"]
-            self._config_v7.bot.short.close_grid_markup_end = json.loads(self._config)["short"]["min_markup"]
-            self._config_v7.bot.short.close_grid_qty_pct = 1.0 / float(json.loads(self._config)["short"]["n_close_orders"])
-            self._config_v7.bot.short.close_trailing_grid_ratio = 0
-            self._config_v7.bot.short.close_trailing_qty_pct = 1
-            self._config_v7.bot.short.close_trailing_retracement_pct = 0
-            self._config_v7.bot.short.close_trailing_threshold_pct = 0
-            self._config_v7.bot.short.ema_span_0 = json.loads(self._config)["short"]["ema_span_0"]
-            self._config_v7.bot.short.ema_span_1 = json.loads(self._config)["short"]["ema_span_1"]
-            self._config_v7.bot.short.entry_grid_double_down_factor = json.loads(self._config)["short"]["ddown_factor"]
-            self._config_v7.bot.short.entry_grid_spacing_pct = json.loads(self._config)["short"]["rentry_pprice_dist"]
-            self._config_v7.bot.short.entry_grid_spacing_weight = json.loads(self._config)["short"]["rentry_pprice_dist_wallet_exposure_weighting"]
-            self._config_v7.bot.short.entry_initial_ema_dist = json.loads(self._config)["short"]["initial_eprice_ema_dist"]
-            self._config_v7.bot.short.entry_initial_qty_pct = json.loads(self._config)["short"]["initial_qty_pct"]
-            self._config_v7.bot.short.entry_trailing_grid_ratio = 0
-            self._config_v7.bot.short.entry_trailing_retracement_pct = 0
-            self._config_v7.bot.short.entry_trailing_threshold_pct = 0
-            # self._config_v7.bot.short.total_wallet_exposure_limit = json.loads(self._config)["short"]["wallet_exposure_limit"]
-            try:
-                self._config_v7.bot.short.unstuck_close_pct = json.loads(self._config)["short"]["auto_unstuck_qty_pct"]
-            except:
-                self._config_v7.bot.short.unstuck_close_pct = 0.025
-            self._config_v7.bot.short.unstuck_ema_dist = json.loads(self._config)["short"]["auto_unstuck_ema_dist"]
-            return json.dumps(self._config_v7.config, indent=4)
-        return None
-
-    @config.setter
-    def config(self, new_config):
-        if new_config != "None":
-            if validateJSON(new_config):
-                self._config = new_config
-                self.update_config()
-                if "error_config" in st.session_state:
-                    del st.session_state.error_config
-            else:
-                st.session_state.error_config = "Config is invalid"
-
-    @config_file.setter
-    def config_file(self, new_config_file):
-        if self._config_file != new_config_file:
-            self._config_file = new_config_file
-
-    @property
-    def long_we(self): return self._long_we
-
-    @long_we.setter
-    def long_we(self, new_long_we):
-        self._long_we = round(new_long_we,2)
-        if self._config:
-            t = json.loads(self._config)
-            t["long"]["wallet_exposure_limit"] = self._long_we
-            self._config = config_pretty_str(t)
-    
-    @property
-    def long_enabled(self): return self._long_enabled
-
-    @long_enabled.setter
-    def long_enabled(self, new_long_enabled):
-        self._long_enabled = new_long_enabled
-        if self._config:
-            t = json.loads(self._config)
-            t["long"]["enabled"] = self._long_enabled
-            self._config = config_pretty_str(t)
-            self._config_v7.bot.long.total_wallet_exposure_limit = self.long_we
-            if self.long_enabled:
-                self._config_v7.bot.long.n_positions = 1.0
-            else:
-                self._config_v7.bot.long.n_positions = 0.0
-
-    @property
-    def short_enabled(self): return self._short_enabled
-
-    @short_enabled.setter
-    def short_enabled(self, new_short_enabled):
-        self._short_enabled = new_short_enabled
-        if self._config:
-            t = json.loads(self._config)
-            t["short"]["enabled"] = self._short_enabled
-            self._config = config_pretty_str(t)
-            self._config_v7.bot.short.total_wallet_exposure_limit = self.short_we
-            if self.short_enabled:
-                self._config_v7.bot.short.n_positions = 1.0
-            else:
-                self._config_v7.bot.short.n_positions = 0.0
-
-    @property
-    def short_we(self): return self._short_we
-
-    @short_we.setter
-    def short_we(self, new_short_we):
-        self._short_we = round(new_short_we,2)
-        if self._config:
-            t = json.loads(self._config)
-            t["short"]["wallet_exposure_limit"] = self._short_we
-            self._config = config_pretty_str(t)
-
-    @property
-    def preview_grid(self): return self._preview_grid
-    @preview_grid.setter
-    def preview_grid(self, new_preview_grid):
-        self._preview_grid = new_preview_grid
-
-    def update_config(self):
-        self.long_we = json.loads(self._config)["long"]["wallet_exposure_limit"]
-        self.short_we = json.loads(self._config)["short"]["wallet_exposure_limit"]
-        self._config_v7.bot.long.total_wallet_exposure_limit = self.long_we
-        self._config_v7.bot.short.total_wallet_exposure_limit = self.short_we
-        self.long_enabled = json.loads(self._config)["long"]["enabled"]
-        self.short_enabled = json.loads(self._config)["short"]["enabled"]
-        if not self.long_enabled:
-            self._config_v7.bot.long.n_positions = 0.0
-        if not self.short_enabled:
-            self._config_v7.bot.short.n_positions = 0.0
-        long = json.loads(self._config)["long"]
-        if "ddown_factor" in long:
-            self._type = "recursive_grid"
-        elif "qty_pct_entry" in long:
-            self._type = "clock"
-        elif "grid_span" in long:
-            self._type = "neat_grid"
-
-    def load_config(self):
-        file =  Path(f'{self._config_file}')
-        if file.exists():
-            with open(file, "r", encoding='utf-8') as f:
-                self._config = f.read()
-                self.update_config()
-
-    def save_config(self):
-        if self._config != None and self._config_file != None:
-            file = Path(f'{self._config_file}')
-            with open(file, "w", encoding='utf-8') as f:
-                f.write(self._config)
-
-    def edit_config(self):
-        # Init session_state for keys
-        if "config_long_enabled" in st.session_state:
-            if st.session_state.config_long_enabled != self.long_enabled:
-                self.long_enabled = st.session_state.config_long_enabled
-                if self.config:
-                    st.session_state.config_instance_config = self.config
-        if "config_short_enabled" in st.session_state:
-            if st.session_state.config_short_enabled != self.short_enabled:
-                self.short_enabled = st.session_state.config_short_enabled
-                if self.config:
-                    st.session_state.config_instance_config = self.config
-        if "config_long_we" in st.session_state:
-            if st.session_state.config_long_we != self.long_we:
-                self.long_we = st.session_state.config_long_we
-                if self.config:
-                    st.session_state.config_instance_config = self.config
-        if "config_short_we" in st.session_state:
-            if st.session_state.config_short_we != self.short_we:
-                self.short_we = st.session_state.config_short_we
-                if self.config:
-                    st.session_state.config_instance_config = self.config
-        if "config_preview_grid" in st.session_state:
-            if st.session_state.config_preview_grid != self.preview_grid:
-                self.preview_grid = st.session_state.config_preview_grid
-        if "config_instance_config" in st.session_state:
-            if st.session_state.config_instance_config != self.config:
-                self.config = st.session_state.config_instance_config
-                st.session_state.config_long_enabled = self.long_enabled
-                st.session_state.config_short_enabled = self.short_enabled
-                st.session_state.config_long_we = self.long_we
-                st.session_state.config_short_we = self.short_we
-            else:
-                if validateJSON(st.session_state.config_instance_config):
-                    if "error_config" in st.session_state:
-                        del st.session_state.error_config
-        # if self.config:
-        #     self.config = st.session_state.config_instance_config
-        col1, col2, col3 = st.columns([1,1,1])
-        with col1:
-            st.toggle("Long enabled", value=self.long_enabled, key="config_long_enabled", help=None)
-            st.number_input("LONG_WALLET_EXPOSURE_LIMIT", min_value=0.0, max_value=100.0, value=float(round(self.long_we,2)), step=0.05, format="%.2f", key="config_long_we", help=pbgui_help.exposure)
-        with col2:
-            st.toggle("Short enabled", value=self.short_enabled, key="config_short_enabled", help=None)
-            st.number_input("SHORT_WALLET_EXPOSURE_LIMIT", min_value=0.0, max_value=100.0, value=float(round(self.short_we,2)), step=0.05, format="%.2f", key="config_short_we", help=pbgui_help.exposure)
-        with col3:
-            st.toggle("Preview Grid", value=self.preview_grid, key="config_preview_grid", help=None)
-            st.selectbox("Config Type", [self.type], index=0, key="config_type", help=None, disabled=True)
-        # Init height and color with defaults
-        height = 600
-        color = None
-        # Display Error
-        if "error_config" in st.session_state:
-            st.error(st.session_state.error_config, icon="🚨")
-            color = "red"
-        if not self.config is None:
-            height = len(self.config.splitlines()) *23
-        if height < 600:
-            height = 600
-        if not self.config:
-            color = "red"
-        col1, col2 = st.columns([1,1])
-        with col1:
-            if color:
-                st.text_area(f':{color}[config]', self.config, key="config_instance_config", height=height)
-            else:
-                st.text_area(f'config', self.config, key="config_instance_config", height=height)
-        with col2:
-            st.text_area(f'config converted to v7', self.config_v7, key="config_instance_config_v7", height=height, disabled=True)
-
-# config template
-# {
-#     "backtest": {
-#         "balance_sample_divider": 60,
-#         "base_dir": "backtests",
-#         "btc_collateral_cap": 0.7,
-#         "btc_collateral_ltv_cap": null,
-#         "combine_ohlcvs": true,
-#         "compress_cache": true,
-#         "end_date": "now",
-#         "exchanges": ["binance","bybit"],
-#         "filter_by_min_effective_cost": false,
-#         "gap_tolerance_ohlcvs_minutes": 120,
-#         "max_warmup_minutes": 0,
-#         "start_date": "2021-03-01",
-#         "starting_balance": 100000,
-#         "suite": {
-#             "aggregate": {"default":"mean"},
-#             "base_label": "base",
-#             "enabled": false,
-#             "include_base_scenario": true,
-#             "scenarios": [
-#                 {
-#                     "coins": ["ADA","BTC","ETH","SOL","XRP"],
-#                     "label": "trump_troupe"
-#                 },
-#                 {
-#                     "coins": [
-#                         "ADA",
-#                         "BCH",
-#                         "BNB",
-#                         "BTC",
-#                         "DOGE",
-#                         "ETH",
-#                         "HYPE",
-#                         "LINK",
-#                         "SOL",
-#                         "TRX",
-#                         "XRP"
-#                     ],
-#                     "label": "subset1"
-#                 },
-#                 {
-#                     "coins": [
-#                         "AVAX",
-#                         "DOT",
-#                         "HBAR",
-#                         "LTC",
-#                         "SHIB",
-#                         "SUI",
-#                         "TON",
-#                         "UNI",
-#                         "XLM",
-#                         "XMR",
-#                         "ZEC"
-#                     ],
-#                     "label": "subset2"
-#                 },
-#                 {
-#                     "coins": [
-#                         "AVAX",
-#                         "BTC",
-#                         "DOGE",
-#                         "HYPE",
-#                         "LINK",
-#                         "SHIB",
-#                         "SOL",
-#                         "UNI",
-#                         "XMR",
-#                         "XRP",
-#                         "ZEC"
-#                     ],
-#                     "label": "subset3"
-#                 },
-#                 {
-#                     "coins": [
-#                         "ADA",
-#                         "BCH",
-#                         "BNB",
-#                         "DOT",
-#                         "ETH",
-#                         "HBAR",
-#                         "LTC",
-#                         "SUI",
-#                         "TON",
-#                         "TRX",
-#                         "XLM"
-#                     ],
-#                     "label": "subset4"
-#                 },
-#                 {
-#                     "coins": ["ADA","BTC","ETH","SOL","XRP"],
-#                     "label": "pure_trailing",
-#                     "overrides": {"bot.long.entry_trailing_grid_ratio":1, "bot.long.close_trailing_grid_ratio":1},
-#                     "start_date": "2024-07"
-#                 },
-#                 {
-#                     "coins": ["ADA","BTC","ETH","SOL","XRP"],
-#                     "label": "pure_grid",
-#                     "overrides": {"bot.long.entry_trailing_grid_ratio":0, "bot.long.close_trailing_grid_ratio":0},
-#                     "start_date": "2024-07"
-#                 },
-#                 {
-#                     "label": "n_positions=3",
-#                     "overrides": {"bot.long.n_positions":3},
-#                     "start_date": "2024-07"
-#                 }
-#             ]
-#         }
-#     },
-#     "bot": {
-#         "long": {
-#             "close_grid_markup_end": 0.00294,
-#             "close_grid_markup_start": 0.00401,
-#             "close_grid_qty_pct": 0.328,
-#             "close_trailing_grid_ratio": -0.541,
-#             "close_trailing_qty_pct": 0.133,
-#             "close_trailing_retracement_pct": 0.00214,
-#             "close_trailing_threshold_pct": 0.0344,
-#             "ema_span_0": 1130.0,
-#             "ema_span_1": 1370.0,
-#             "entry_grid_double_down_factor": 2.28,
-#             "entry_grid_spacing_pct": 0.0147,
-#             "entry_grid_spacing_volatility_weight": 93.7,
-#             "entry_grid_spacing_we_weight": 4.35,
-#             "entry_initial_ema_dist": 0.00245,
-#             "entry_initial_qty_pct": 0.0159,
-#             "entry_trailing_double_down_factor": 0.443,
-#             "entry_trailing_grid_ratio": -0.519,
-#             "entry_trailing_retracement_pct": 0.00724,
-#             "entry_trailing_retracement_volatility_weight": 140.0,
-#             "entry_trailing_retracement_we_weight": 18.6,
-#             "entry_trailing_threshold_pct": 0.00911,
-#             "entry_trailing_threshold_volatility_weight": 199.0,
-#             "entry_trailing_threshold_we_weight": 2.11,
-#             "entry_volatility_ema_span_hours": 2540.0,
-#             "filter_volatility_drop_pct": 0,
-#             "filter_volatility_ema_span": 103.0,
-#             "filter_volume_drop_pct": 0.5,
-#             "filter_volume_ema_span": 2160,
-#             "n_positions": 7,
-#             "risk_twel_enforcer_threshold": 0.99,
-#             "risk_we_excess_allowance_pct": 0.907,
-#             "risk_wel_enforcer_threshold": 0.985,
-#             "total_wallet_exposure_limit": 1,
-#             "unstuck_close_pct": 0.0182,
-#             "unstuck_ema_dist": -0.0906,
-#             "unstuck_loss_allowance_pct": 0.00143,
-#             "unstuck_threshold": 0.447
-#         },
-#         "short": {
-#             "close_grid_markup_end": 0.001,
-#             "close_grid_markup_start": 0.001,
-#             "close_grid_qty_pct": 0.05,
-#             "close_trailing_grid_ratio": -1,
-#             "close_trailing_qty_pct": 0.05,
-#             "close_trailing_retracement_pct": 0.0001,
-#             "close_trailing_threshold_pct": 0.0001,
-#             "ema_span_0": 200,
-#             "ema_span_1": 200,
-#             "entry_grid_double_down_factor": 0.2,
-#             "entry_grid_spacing_pct": 0.001,
-#             "entry_grid_spacing_volatility_weight": 1,
-#             "entry_grid_spacing_we_weight": 0.1,
-#             "entry_initial_ema_dist": -0.1,
-#             "entry_initial_qty_pct": 0.004,
-#             "entry_trailing_double_down_factor": 0.2,
-#             "entry_trailing_grid_ratio": -1,
-#             "entry_trailing_retracement_pct": 0.0001,
-#             "entry_trailing_retracement_volatility_weight": 1,
-#             "entry_trailing_retracement_we_weight": 0,
-#             "entry_trailing_threshold_pct": 0.0001,
-#             "entry_trailing_threshold_volatility_weight": 1,
-#             "entry_trailing_threshold_we_weight": 0,
-#             "entry_volatility_ema_span_hours": 672,
-#             "filter_volatility_drop_pct": 0,
-#             "filter_volatility_ema_span": 10,
-#             "filter_volume_drop_pct": 0.5,
-#             "filter_volume_ema_span": 360,
-#             "n_positions": 7,
-#             "risk_twel_enforcer_threshold": 0.95,
-#             "risk_we_excess_allowance_pct": 0,
-#             "risk_wel_enforcer_threshold": 0.95,
-#             "total_wallet_exposure_limit": 0,
-#             "unstuck_close_pct": 0.001,
-#             "unstuck_ema_dist": -0.1,
-#             "unstuck_loss_allowance_pct": 0.001,
-#             "unstuck_threshold": 0.4
-#         }
-#     },
-#     "coin_overrides": {},
-#     "live": {
-#         "approved_coins": "configs/approved_coins.json",
-#         "auto_gs": true,
-#         "empty_means_all_approved": true,
-#         "execution_delay_seconds": 2,
-#         "filter_by_min_effective_cost": true,
-#         "forced_mode_long": "",
-#         "forced_mode_short": "",
-#         "ignored_coins": {"long":[],"short":[]},
-#         "inactive_coin_candle_ttl_minutes": 10,
-#         "leverage": 10,
-#         "market_orders_allowed": false,
-#         "max_disk_candles_per_symbol_per_tf": 2000000,
-#         "max_memory_candles_per_symbol": 200000,
-#         "max_n_cancellations_per_batch": 5,
-#         "max_n_creations_per_batch": 3,
-#         "max_n_restarts_per_day": 10,
-#         "max_warmup_minutes": 0,
-#         "minimum_coin_age_days": 180,
-#         "order_match_tolerance_pct": 0.0002,
-#         "pnls_max_lookback_days": 30,
-#         "price_distance_threshold": 0.002,
-#         "recv_window_ms": 5000,
-#         "time_in_force": "good_till_cancelled",
-#         "balance_override": null,
-#         "balance_hysteresis_snap_pct": 0.02,
-#         "user": "bybit_01",
-#         "warmup_ratio": 0.3
-#     },
-#     "logging": {
-#         "level": 1,
-#         "memory_snapshot_interval_minutes": 30,
-#         "volume_refresh_info_threshold_seconds": 30
-#     },
-#     "optimize": {
-#         "bounds": {
-#             "long_close_grid_markup_end": [0.001,0.025],
-#             "long_close_grid_markup_start": [0.001,0.025],
-#             "long_close_grid_qty_pct": [0.05,1],
-#             "long_close_trailing_grid_ratio": [-1,1],
-#             "long_close_trailing_qty_pct": [0.05,1],
-#             "long_close_trailing_retracement_pct": [0.0001,0.025],
-#             "long_close_trailing_threshold_pct": [0.0001,0.035],
-#             "long_ema_span_0": [200,1440],
-#             "long_ema_span_1": [200,1440],
-#             "long_entry_grid_double_down_factor": [0.2,3],
-#             "long_entry_grid_spacing_pct": [0.001,0.045],
-#             "long_entry_grid_spacing_volatility_weight": [1,300],
-#             "long_entry_grid_spacing_we_weight": [0.1,20],
-#             "long_entry_initial_ema_dist": [-0.1,0.003],
-#             "long_entry_initial_qty_pct": [0.004,0.05],
-#             "long_entry_trailing_double_down_factor": [0.2,2],
-#             "long_entry_trailing_grid_ratio": [-1,1],
-#             "long_entry_trailing_retracement_pct": [0.0001,0.03],
-#             "long_entry_trailing_retracement_volatility_weight": [1,300],
-#             "long_entry_trailing_retracement_we_weight": [0,20],
-#             "long_entry_trailing_threshold_pct": [0.0001,0.03],
-#             "long_entry_trailing_threshold_volatility_weight": [1,300],
-#             "long_entry_trailing_threshold_we_weight": [0,20],
-#             "long_entry_volatility_ema_span_hours": [672,2688],
-#             "long_filter_volatility_drop_pct": [0,0],
-#             "long_filter_volatility_ema_span": [10,720],
-#             "long_filter_volume_drop_pct": [0.5,1],
-#             "long_filter_volume_ema_span": [360,2880],
-#             "long_n_positions": [7,20],
-#             "long_risk_twel_enforcer_threshold": [0.95,0.99],
-#             "long_risk_we_excess_allowance_pct": [0,3],
-#             "long_risk_wel_enforcer_threshold": [0.95,0.99],
-#             "long_total_wallet_exposure_limit": [1,1],
-#             "long_unstuck_close_pct": [0.001,0.05],
-#             "long_unstuck_ema_dist": [-0.1,0.01],
-#             "long_unstuck_loss_allowance_pct": [0.001,0.05],
-#             "long_unstuck_threshold": [0.4,0.99],
-#             "short_close_grid_markup_end": [0.001,0.025],
-#             "short_close_grid_markup_start": [0.001,0.025],
-#             "short_close_grid_qty_pct": [0.05,1],
-#             "short_close_trailing_grid_ratio": [-1,1],
-#             "short_close_trailing_qty_pct": [0.05,1],
-#             "short_close_trailing_retracement_pct": [0.0001,0.025],
-#             "short_close_trailing_threshold_pct": [0.0001,0.035],
-#             "short_ema_span_0": [200,1440],
-#             "short_ema_span_1": [200,1440],
-#             "short_entry_grid_double_down_factor": [0.2,3],
-#             "short_entry_grid_spacing_pct": [0.001,0.045],
-#             "short_entry_grid_spacing_volatility_weight": [1,300],
-#             "short_entry_grid_spacing_we_weight": [0.1,20],
-#             "short_entry_initial_ema_dist": [-0.1,0.003],
-#             "short_entry_initial_qty_pct": [0.004,0.05],
-#             "short_entry_trailing_double_down_factor": [0.2,2],
-#             "short_entry_trailing_grid_ratio": [-1,1],
-#             "short_entry_trailing_retracement_pct": [0.0001,0.03],
-#             "short_entry_trailing_retracement_volatility_weight": [1,300],
-#             "short_entry_trailing_retracement_we_weight": [0,20],
-#             "short_entry_trailing_threshold_pct": [0.0001,0.03],
-#             "short_entry_trailing_threshold_volatility_weight": [1,300],
-#             "short_entry_trailing_threshold_we_weight": [0,20],
-#             "short_entry_volatility_ema_span_hours": [672,2688],
-#             "short_filter_volatility_drop_pct": [0,0],
-#             "short_filter_volatility_ema_span": [10,720],
-#             "short_filter_volume_drop_pct": [0.5,1],
-#             "short_filter_volume_ema_span": [360,2880],
-#             "short_n_positions": [7,20],
-#             "short_risk_twel_enforcer_threshold": [0.95,0.99],
-#             "short_risk_we_excess_allowance_pct": [0,3],
-#             "short_risk_wel_enforcer_threshold": [0.95,0.99],
-#             "short_total_wallet_exposure_limit": [0,0],
-#             "short_unstuck_close_pct": [0.001,0.05],
-#             "short_unstuck_ema_dist": [-0.1,0.01],
-#             "short_unstuck_loss_allowance_pct": [0.001,0.05],
-#             "short_unstuck_threshold": [0.4,0.99]
-#         },
-#         "compress_results_file": true,
-#         "crossover_eta": 20,
-#         "crossover_probability": 0.64,
-#         "enable_overrides": [],
-#         "iters": 500000,
-#         "limits": [
-#             {"metric":"drawdown_worst_btc","penalize_if":"greater_than","value":0.9},
-#             {"metric":"drawdown_worst_usd","penalize_if":"greater_than","value":0.9},
-#             {"metric":"loss_profit_ratio","penalize_if":"greater_than","value":0.6},
-#             {
-#                 "metric": "adg_pnl_w",
-#                 "penalize_if": "less_than",
-#                 "stat": "mean",
-#                 "value": 0.0007
-#             },
-#             {
-#                 "metric": "peak_recovery_hours_pnl",
-#                 "penalize_if": "greater_than",
-#                 "value": 1344
-#             },
-#             {
-#                 "metric": "position_held_hours_max",
-#                 "penalize_if": "greater_than",
-#                 "value": 1344
-#             },
-#             {
-#                 "metric": "position_unchanged_hours_max",
-#                 "penalize_if": "greater_than",
-#                 "value": 840
-#             }
-#         ],
-#         "mutation_eta": 20,
-#         "mutation_indpb": 0.05,
-#         "mutation_probability": 0.34,
-#         "n_cpus": 8,
-#         "offspring_multiplier": 1,
-#         "pareto_max_size": 250,
-#         "population_size": 250,
-#         "round_to_n_significant_digits": 3,
-#         "scoring": [
-#             "adg_pnl_w",
-#             "mdg_pnl_w",
-#             "loss_profit_ratio",
-#             "peak_recovery_hours_pnl",
-#             "position_held_hours_max",
-#             "position_unchanged_hours_max",
-#             "volume_pct_per_day_avg_w",
-#             "entry_initial_balance_pct_long"
-#         ],
-#         "write_all_results": true
-#     }
-# }
-
-
 
 class Logging:
 
@@ -1637,14 +1387,13 @@ class Backtest:
         self._gap_tolerance_ohlcvs_minutes = 120.0
         # PB7 backtest defaults (see pb7/src/config_utils.py)
         self._maker_fee_override = None
+        self._taker_fee_override = None
         self._start_date = "2020-01-01"
         self._starting_balance = 1000.0
         self._btc_collateral_cap = 0.0
         self._btc_collateral_ltv_cap = None
         self._max_warmup_minutes = 0.0
         self._candle_interval_minutes = 1
-        self._liquidation_threshold = 0.05
-        self._market_order_slippage_pct = 0.0005
         self._market_settings_sources = {}
         self._volume_normalization = True
         self._coin_sources = {}
@@ -1660,14 +1409,13 @@ class Backtest:
             "filter_by_min_effective_cost": self._filter_by_min_effective_cost,
             "gap_tolerance_ohlcvs_minutes": self._gap_tolerance_ohlcvs_minutes,
             "maker_fee_override": self._maker_fee_override,
+            "taker_fee_override": self._taker_fee_override,
             "start_date": self._start_date,
             "starting_balance": self._starting_balance,
             "btc_collateral_cap": self._btc_collateral_cap,
             "btc_collateral_ltv_cap": self._btc_collateral_ltv_cap,
             "max_warmup_minutes": self._max_warmup_minutes,
             "candle_interval_minutes": self._candle_interval_minutes,
-            "liquidation_threshold": self._liquidation_threshold,
-            "market_order_slippage_pct": self._market_order_slippage_pct,
             "market_settings_sources": self._market_settings_sources,
             "volume_normalization": self._volume_normalization,
             "coin_sources": self._coin_sources,
@@ -1688,28 +1436,6 @@ class Backtest:
         return self._backtest
     @backtest.setter
     def backtest(self, new_backtest):
-        # PB7 optimize result / pareto payloads may store suite fields at the
-        # top level of `backtest` instead of under `backtest.suite`.
-        # Normalize that shape on load so the editor sees scenarios correctly.
-        if isinstance(new_backtest, dict):
-            top_level_suite_fields = any(
-                key in new_backtest
-                for key in ("scenarios", "aggregate", "include_base_scenario", "base_label")
-            )
-            if top_level_suite_fields:
-                normalized_suite = dict((new_backtest.get("suite") or {}) if isinstance(new_backtest.get("suite"), dict) else {})
-                if "enabled" not in normalized_suite and "suite_enabled" in new_backtest:
-                    normalized_suite["enabled"] = new_backtest.get("suite_enabled")
-                if "include_base_scenario" not in normalized_suite and "include_base_scenario" in new_backtest:
-                    normalized_suite["include_base_scenario"] = new_backtest.get("include_base_scenario")
-                if "base_label" not in normalized_suite and "base_label" in new_backtest:
-                    normalized_suite["base_label"] = new_backtest.get("base_label")
-                if "aggregate" not in normalized_suite and "aggregate" in new_backtest:
-                    normalized_suite["aggregate"] = new_backtest.get("aggregate")
-                if "scenarios" not in normalized_suite and "scenarios" in new_backtest:
-                    normalized_suite["scenarios"] = new_backtest.get("scenarios")
-                new_backtest = dict(new_backtest)
-                new_backtest["suite"] = normalized_suite
         if "balance_sample_divider" in new_backtest:
             self.balance_sample_divider = new_backtest["balance_sample_divider"]
         if "base_dir" in new_backtest:
@@ -1726,6 +1452,8 @@ class Backtest:
             self.gap_tolerance_ohlcvs_minutes = new_backtest["gap_tolerance_ohlcvs_minutes"]
         if "maker_fee_override" in new_backtest:
             self.maker_fee_override = new_backtest["maker_fee_override"]
+        if "taker_fee_override" in new_backtest:
+            self.taker_fee_override = new_backtest["taker_fee_override"]
         if "start_date" in new_backtest:
             self.start_date = new_backtest["start_date"]
         if "starting_balance" in new_backtest:
@@ -1744,10 +1472,6 @@ class Backtest:
             self.max_warmup_minutes = new_backtest["max_warmup_minutes"]
         if "candle_interval_minutes" in new_backtest:
             self.candle_interval_minutes = new_backtest["candle_interval_minutes"]
-        if "liquidation_threshold" in new_backtest:
-            self.liquidation_threshold = new_backtest["liquidation_threshold"]
-        if "market_order_slippage_pct" in new_backtest:
-            self.market_order_slippage_pct = new_backtest["market_order_slippage_pct"]
         if "market_settings_sources" in new_backtest:
             self.market_settings_sources = new_backtest["market_settings_sources"]
         if "volume_normalization" in new_backtest:
@@ -1781,6 +1505,8 @@ class Backtest:
     @property
     def maker_fee_override(self): return self._maker_fee_override
     @property
+    def taker_fee_override(self): return self._taker_fee_override
+    @property
     def start_date(self): return self._start_date
     @property
     def starting_balance(self): return self._starting_balance
@@ -1792,10 +1518,6 @@ class Backtest:
     def max_warmup_minutes(self): return self._max_warmup_minutes
     @property
     def candle_interval_minutes(self): return self._candle_interval_minutes
-    @property
-    def liquidation_threshold(self): return self._liquidation_threshold
-    @property
-    def market_order_slippage_pct(self): return self._market_order_slippage_pct
     @property
     def market_settings_sources(self): return self._market_settings_sources
     @property
@@ -1844,6 +1566,13 @@ class Backtest:
         else:
             self._maker_fee_override = float(new_maker_fee_override)
         self._backtest["maker_fee_override"] = self._maker_fee_override
+    @taker_fee_override.setter
+    def taker_fee_override(self, new_taker_fee_override):
+        if new_taker_fee_override in (None, ""):
+            self._taker_fee_override = None
+        else:
+            self._taker_fee_override = float(new_taker_fee_override)
+        self._backtest["taker_fee_override"] = self._taker_fee_override
     @start_date.setter
     def start_date(self, new_start_date):
         self._start_date = new_start_date
@@ -1872,16 +1601,6 @@ class Backtest:
             value = 1
         self._candle_interval_minutes = max(1, value)
         self._backtest["candle_interval_minutes"] = self._candle_interval_minutes
-    @liquidation_threshold.setter
-    def liquidation_threshold(self, new_liquidation_threshold):
-        value = 0.05 if new_liquidation_threshold in (None, "") else float(new_liquidation_threshold)
-        self._liquidation_threshold = min(max(0.0, value), 0.999999)
-        self._backtest["liquidation_threshold"] = self._liquidation_threshold
-    @market_order_slippage_pct.setter
-    def market_order_slippage_pct(self, new_market_order_slippage_pct):
-        value = 0.0005 if new_market_order_slippage_pct in (None, "") else float(new_market_order_slippage_pct)
-        self._market_order_slippage_pct = max(0.0, value)
-        self._backtest["market_order_slippage_pct"] = self._market_order_slippage_pct
     @market_settings_sources.setter
     def market_settings_sources(self, new_market_settings_sources):
         self._market_settings_sources = new_market_settings_sources if new_market_settings_sources else {}
@@ -1961,75 +1680,65 @@ class Bot:
     @st.fragment
     def edit(self):
         # Init session_state for keys
-        if "edit_configv7_long_hsl_enabled" not in st.session_state:
-            st.session_state.edit_configv7_long_hsl_enabled = self.long.hsl_enabled
-        if "edit_configv7_long_hsl_no_restart_drawdown_threshold" not in st.session_state:
-            st.session_state.edit_configv7_long_hsl_no_restart_drawdown_threshold = float(self.long.hsl_no_restart_drawdown_threshold)
-        if "edit_configv7_long_hsl_orange_tier_mode" not in st.session_state:
-            st.session_state.edit_configv7_long_hsl_orange_tier_mode = self.long.hsl_orange_tier_mode
-        if "edit_configv7_long_hsl_panic_close_order_type" not in st.session_state:
-            st.session_state.edit_configv7_long_hsl_panic_close_order_type = self.long.hsl_panic_close_order_type
-        if "edit_configv7_long_hsl_tier_yellow" not in st.session_state:
-            st.session_state.edit_configv7_long_hsl_tier_yellow = float(self.long.hsl_tier_ratios["yellow"])
-        if "edit_configv7_long_hsl_tier_orange" not in st.session_state:
-            st.session_state.edit_configv7_long_hsl_tier_orange = float(self.long.hsl_tier_ratios["orange"])
+        if "edit_configv7_long_twe" in st.session_state:
+            if st.session_state.edit_configv7_long_twe != self.long.total_wallet_exposure_limit:
+                self.long.total_wallet_exposure_limit = round(st.session_state.edit_configv7_long_twe,2)
+                st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
+            if "edit_configv7_long" in st.session_state:
+                try:
+                    long = json.loads(st.session_state.edit_configv7_long)
+                    if st.session_state.edit_configv7_long_twe != float(long["total_wallet_exposure_limit"]):
+                        st.session_state.edit_configv7_long_twe = float(long["total_wallet_exposure_limit"])
+                except:
+                    st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
+                    error_popup("Invalid JSON long | RESET")
+        else:
+            st.session_state.edit_configv7_long_twe = float(self.long.total_wallet_exposure_limit)
 
-        if "edit_configv7_short_hsl_enabled" not in st.session_state:
-            st.session_state.edit_configv7_short_hsl_enabled = self.short.hsl_enabled
-        if "edit_configv7_short_hsl_no_restart_drawdown_threshold" not in st.session_state:
-            st.session_state.edit_configv7_short_hsl_no_restart_drawdown_threshold = float(self.short.hsl_no_restart_drawdown_threshold)
-        if "edit_configv7_short_hsl_orange_tier_mode" not in st.session_state:
-            st.session_state.edit_configv7_short_hsl_orange_tier_mode = self.short.hsl_orange_tier_mode
-        if "edit_configv7_short_hsl_panic_close_order_type" not in st.session_state:
-            st.session_state.edit_configv7_short_hsl_panic_close_order_type = self.short.hsl_panic_close_order_type
-        if "edit_configv7_short_hsl_tier_yellow" not in st.session_state:
-            st.session_state.edit_configv7_short_hsl_tier_yellow = float(self.short.hsl_tier_ratios["yellow"])
-        if "edit_configv7_short_hsl_tier_orange" not in st.session_state:
-            st.session_state.edit_configv7_short_hsl_tier_orange = float(self.short.hsl_tier_ratios["orange"])
+        if "edit_configv7_long_positions" in st.session_state:
+            if st.session_state.edit_configv7_long_positions != self.long.n_positions:
+                self.long.n_positions = round(st.session_state.edit_configv7_long_positions,0)
+                st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
+            if "edit_configv7_long" in st.session_state:
+                try:
+                    long = json.loads(st.session_state.edit_configv7_long)
+                    if st.session_state.edit_configv7_long_positions != float(long["n_positions"]):
+                        st.session_state.edit_configv7_long_positions = float(long["n_positions"])
+                except:
+                    st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
+                    error_popup("Invalid JSON long | RESET")
+        else:
+            st.session_state.edit_configv7_long_positions = float(self.long.n_positions)
 
-        long_hsl_changed = False
-        if st.session_state.edit_configv7_long_hsl_enabled != self.long.hsl_enabled:
-            self.long.hsl_enabled = st.session_state.edit_configv7_long_hsl_enabled
-            long_hsl_changed = True
-        if st.session_state.edit_configv7_long_hsl_no_restart_drawdown_threshold != self.long.hsl_no_restart_drawdown_threshold:
-            self.long.hsl_no_restart_drawdown_threshold = st.session_state.edit_configv7_long_hsl_no_restart_drawdown_threshold
-            long_hsl_changed = True
-        if st.session_state.edit_configv7_long_hsl_orange_tier_mode != self.long.hsl_orange_tier_mode:
-            self.long.hsl_orange_tier_mode = st.session_state.edit_configv7_long_hsl_orange_tier_mode
-            long_hsl_changed = True
-        if st.session_state.edit_configv7_long_hsl_panic_close_order_type != self.long.hsl_panic_close_order_type:
-            self.long.hsl_panic_close_order_type = st.session_state.edit_configv7_long_hsl_panic_close_order_type
-            long_hsl_changed = True
-        if st.session_state.edit_configv7_long_hsl_tier_yellow != float(self.long.hsl_tier_ratios["yellow"]) or st.session_state.edit_configv7_long_hsl_tier_orange != float(self.long.hsl_tier_ratios["orange"]):
-            self.long.hsl_tier_ratios = {
-                "yellow": st.session_state.edit_configv7_long_hsl_tier_yellow,
-                "orange": st.session_state.edit_configv7_long_hsl_tier_orange,
-            }
-            long_hsl_changed = True
-        if long_hsl_changed:
-            st.session_state.edit_configv7_long = json.dumps(self.bot["long"], indent=4)
+        if "edit_configv7_short_twe" in st.session_state:
+            if st.session_state.edit_configv7_short_twe != self.short.total_wallet_exposure_limit:
+                self.short.total_wallet_exposure_limit = round(st.session_state.edit_configv7_short_twe,2)
+                st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
+            if "edit_configv7_short" in st.session_state:
+                try:
+                    short = json.loads(st.session_state.edit_configv7_short)
+                    if st.session_state.edit_configv7_short_twe != float(short["total_wallet_exposure_limit"]):
+                        st.session_state.edit_configv7_short_twe = float(short["total_wallet_exposure_limit"])
+                except:
+                    st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
+                    error_popup("Invalid JSON short | RESET")
+        else:
+            st.session_state.edit_configv7_short_twe = float(self.short.total_wallet_exposure_limit)
 
-        short_hsl_changed = False
-        if st.session_state.edit_configv7_short_hsl_enabled != self.short.hsl_enabled:
-            self.short.hsl_enabled = st.session_state.edit_configv7_short_hsl_enabled
-            short_hsl_changed = True
-        if st.session_state.edit_configv7_short_hsl_no_restart_drawdown_threshold != self.short.hsl_no_restart_drawdown_threshold:
-            self.short.hsl_no_restart_drawdown_threshold = st.session_state.edit_configv7_short_hsl_no_restart_drawdown_threshold
-            short_hsl_changed = True
-        if st.session_state.edit_configv7_short_hsl_orange_tier_mode != self.short.hsl_orange_tier_mode:
-            self.short.hsl_orange_tier_mode = st.session_state.edit_configv7_short_hsl_orange_tier_mode
-            short_hsl_changed = True
-        if st.session_state.edit_configv7_short_hsl_panic_close_order_type != self.short.hsl_panic_close_order_type:
-            self.short.hsl_panic_close_order_type = st.session_state.edit_configv7_short_hsl_panic_close_order_type
-            short_hsl_changed = True
-        if st.session_state.edit_configv7_short_hsl_tier_yellow != float(self.short.hsl_tier_ratios["yellow"]) or st.session_state.edit_configv7_short_hsl_tier_orange != float(self.short.hsl_tier_ratios["orange"]):
-            self.short.hsl_tier_ratios = {
-                "yellow": st.session_state.edit_configv7_short_hsl_tier_yellow,
-                "orange": st.session_state.edit_configv7_short_hsl_tier_orange,
-            }
-            short_hsl_changed = True
-        if short_hsl_changed:
-            st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
+        if "edit_configv7_short_positions" in st.session_state:
+            if st.session_state.edit_configv7_short_positions != self.short.n_positions:
+                self.short.n_positions = round(st.session_state.edit_configv7_short_positions,0)
+                st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
+            if "edit_configv7_short" in st.session_state:
+                try:
+                    short = json.loads(st.session_state.edit_configv7_short)
+                    if st.session_state.edit_configv7_short_positions != float(short["n_positions"]):
+                        st.session_state.edit_configv7_short_positions = float(short["n_positions"])
+                except:
+                    st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
+                    error_popup("Invalid JSON short | RESET")   
+        else:
+            st.session_state.edit_configv7_short_positions = float(self.short.n_positions)
 
         if "edit_configv7_long" in st.session_state:
             if st.session_state.edit_configv7_long != json.dumps(self.bot["long"], indent=4):
@@ -2051,21 +1760,15 @@ class Bot:
         else:
             st.session_state.edit_configv7_short = json.dumps(self.bot["short"], indent=4)
         # Display config
-        col1, col2 = st.columns([1, 1], vertical_alignment="top")
+        col1, col2, col3, col4 = st.columns([1,1,1,1])
         with col1:
-            st.checkbox("long hsl_enabled", key="edit_configv7_long_hsl_enabled", help=pbgui_help.hsl_enabled)
-            st.number_input("long hsl_no_restart", min_value=0.0, max_value=1.0, step=0.01, format="%.2f", key="edit_configv7_long_hsl_no_restart_drawdown_threshold", help=pbgui_help.hsl_no_restart_drawdown_threshold)
-            st.selectbox("long hsl_orange_mode", ["graceful_stop", "tp_only_with_active_entry_cancellation"], key="edit_configv7_long_hsl_orange_tier_mode", help=pbgui_help.hsl_orange_tier_mode)
-            st.selectbox("long hsl_panic_order", ["limit", "market"], key="edit_configv7_long_hsl_panic_close_order_type", help=pbgui_help.hsl_panic_close_order_type)
-            st.number_input("long hsl_yellow", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_long_hsl_tier_yellow", help=pbgui_help.hsl_tier_ratios)
-            st.number_input("long hsl_orange", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_long_hsl_tier_orange", help=pbgui_help.hsl_tier_ratios)
+            st.number_input("long twe", min_value=0.0, max_value=100.0, step=0.05, format="%.2f", key="edit_configv7_long_twe", help=pbgui_help.total_wallet_exposure_limit)
         with col2:
-            st.checkbox("short hsl_enabled", key="edit_configv7_short_hsl_enabled", help=pbgui_help.hsl_enabled)
-            st.number_input("short hsl_no_restart", min_value=0.0, max_value=1.0, step=0.01, format="%.2f", key="edit_configv7_short_hsl_no_restart_drawdown_threshold", help=pbgui_help.hsl_no_restart_drawdown_threshold)
-            st.selectbox("short hsl_orange_mode", ["graceful_stop", "tp_only_with_active_entry_cancellation"], key="edit_configv7_short_hsl_orange_tier_mode", help=pbgui_help.hsl_orange_tier_mode)
-            st.selectbox("short hsl_panic_order", ["limit", "market"], key="edit_configv7_short_hsl_panic_close_order_type", help=pbgui_help.hsl_panic_close_order_type)
-            st.number_input("short hsl_yellow", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_short_hsl_tier_yellow", help=pbgui_help.hsl_tier_ratios)
-            st.number_input("short hsl_orange", min_value=0.0, max_value=0.999999, step=0.01, format="%.2f", key="edit_configv7_short_hsl_tier_orange", help=pbgui_help.hsl_tier_ratios)
+            st.number_input("long positions", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="edit_configv7_long_positions", help=pbgui_help.n_positions)
+        with col3:
+            st.number_input("short twe", min_value=0.0, max_value=100.0, step=0.05, format="%.2f", key="edit_configv7_short_twe", help=pbgui_help.total_wallet_exposure_limit)
+        with col4:
+            st.number_input("short positions", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="edit_configv7_short_positions", help=pbgui_help.n_positions)
         col1, col2 = st.columns([1,1])
         with col1:
             st.text_area(f'long', key="edit_configv7_long", height=600)
@@ -2146,11 +1849,6 @@ class Long:
         self._entry_trailing_retracement_we_weight = 0.0
         self._entry_trailing_retracement_volatility_weight = 0.0
         self._entry_volatility_ema_span_hours = 72
-        self._hsl_enabled = False
-        self._hsl_no_restart_drawdown_threshold = 1.0
-        self._hsl_orange_tier_mode = "tp_only_with_active_entry_cancellation"
-        self._hsl_panic_close_order_type = "limit"
-        self._hsl_tier_ratios = {"orange": 0.75, "yellow": 0.5}
         self._filter_volatility_ema_span = 60.0
         self._filter_volatility_drop_pct = 0.0
         self._filter_volume_drop_pct = 0.95
@@ -2189,11 +1887,6 @@ class Long:
             "entry_trailing_retracement_we_weight": self._entry_trailing_retracement_we_weight,
             "entry_trailing_retracement_volatility_weight": self._entry_trailing_retracement_volatility_weight,
             "entry_volatility_ema_span_hours": self._entry_volatility_ema_span_hours,
-            "hsl_enabled": self._hsl_enabled,
-            "hsl_no_restart_drawdown_threshold": self._hsl_no_restart_drawdown_threshold,
-            "hsl_orange_tier_mode": self._hsl_orange_tier_mode,
-            "hsl_panic_close_order_type": self._hsl_panic_close_order_type,
-            "hsl_tier_ratios": self._hsl_tier_ratios,
             "filter_volatility_ema_span": self._filter_volatility_ema_span,
             "filter_volatility_drop_pct": self._filter_volatility_drop_pct,
             "filter_volume_drop_pct": self._filter_volume_drop_pct,
@@ -2276,16 +1969,6 @@ class Long:
             self.entry_trailing_retracement_volatility_weight = new_long["entry_trailing_retracement_volatility_weight"]
         if "entry_volatility_ema_span_hours" in new_long:
             self.entry_volatility_ema_span_hours = new_long["entry_volatility_ema_span_hours"]
-        if "hsl_enabled" in new_long:
-            self.hsl_enabled = new_long["hsl_enabled"]
-        if "hsl_no_restart_drawdown_threshold" in new_long:
-            self.hsl_no_restart_drawdown_threshold = new_long["hsl_no_restart_drawdown_threshold"]
-        if "hsl_orange_tier_mode" in new_long:
-            self.hsl_orange_tier_mode = new_long["hsl_orange_tier_mode"]
-        if "hsl_panic_close_order_type" in new_long:
-            self.hsl_panic_close_order_type = new_long["hsl_panic_close_order_type"]
-        if "hsl_tier_ratios" in new_long:
-            self.hsl_tier_ratios = new_long["hsl_tier_ratios"]
         # Fix for old configs
         elif "entry_grid_spacing_log_span_hours" in new_long:
             self.entry_volatility_ema_span_hours = new_long["entry_grid_spacing_log_span_hours"]
@@ -2378,16 +2061,6 @@ class Long:
     def entry_trailing_retracement_volatility_weight(self): return self._entry_trailing_retracement_volatility_weight
     @property
     def entry_volatility_ema_span_hours(self): return self._entry_volatility_ema_span_hours
-    @property
-    def hsl_enabled(self): return self._hsl_enabled
-    @property
-    def hsl_no_restart_drawdown_threshold(self): return self._hsl_no_restart_drawdown_threshold
-    @property
-    def hsl_orange_tier_mode(self): return self._hsl_orange_tier_mode
-    @property
-    def hsl_panic_close_order_type(self): return self._hsl_panic_close_order_type
-    @property
-    def hsl_tier_ratios(self): return self._hsl_tier_ratios
     @property
     def filter_volatility_ema_span(self): return self._filter_volatility_ema_span
     @property
@@ -2511,30 +2184,6 @@ class Long:
     def entry_volatility_ema_span_hours(self, new_entry_volatility_ema_span_hours):
         self._entry_volatility_ema_span_hours = new_entry_volatility_ema_span_hours
         self._long["entry_volatility_ema_span_hours"] = self._entry_volatility_ema_span_hours
-    @hsl_enabled.setter
-    def hsl_enabled(self, new_hsl_enabled):
-        self._hsl_enabled = bool(new_hsl_enabled)
-        self._long["hsl_enabled"] = self._hsl_enabled
-    @hsl_no_restart_drawdown_threshold.setter
-    def hsl_no_restart_drawdown_threshold(self, new_hsl_no_restart_drawdown_threshold):
-        self._hsl_no_restart_drawdown_threshold = float(new_hsl_no_restart_drawdown_threshold)
-        self._long["hsl_no_restart_drawdown_threshold"] = self._hsl_no_restart_drawdown_threshold
-    @hsl_orange_tier_mode.setter
-    def hsl_orange_tier_mode(self, new_hsl_orange_tier_mode):
-        self._hsl_orange_tier_mode = new_hsl_orange_tier_mode
-        self._long["hsl_orange_tier_mode"] = self._hsl_orange_tier_mode
-    @hsl_panic_close_order_type.setter
-    def hsl_panic_close_order_type(self, new_hsl_panic_close_order_type):
-        self._hsl_panic_close_order_type = new_hsl_panic_close_order_type
-        self._long["hsl_panic_close_order_type"] = self._hsl_panic_close_order_type
-    @hsl_tier_ratios.setter
-    def hsl_tier_ratios(self, new_hsl_tier_ratios):
-        current = dict(self._hsl_tier_ratios)
-        if isinstance(new_hsl_tier_ratios, dict):
-            current["orange"] = float(new_hsl_tier_ratios.get("orange", current.get("orange", 0.75)))
-            current["yellow"] = float(new_hsl_tier_ratios.get("yellow", current.get("yellow", 0.5)))
-        self._hsl_tier_ratios = current
-        self._long["hsl_tier_ratios"] = self._hsl_tier_ratios
     @filter_volatility_ema_span.setter
     def filter_volatility_ema_span(self, new_filter_volatility_ema_span):
         self._filter_volatility_ema_span = new_filter_volatility_ema_span
@@ -2617,11 +2266,6 @@ class Short:
         self._entry_trailing_retracement_we_weight = 0.0
         self._entry_trailing_retracement_volatility_weight = 0.0
         self._entry_volatility_ema_span_hours = 72
-        self._hsl_enabled = False
-        self._hsl_no_restart_drawdown_threshold = 1.0
-        self._hsl_orange_tier_mode = "tp_only_with_active_entry_cancellation"
-        self._hsl_panic_close_order_type = "limit"
-        self._hsl_tier_ratios = {"orange": 0.75, "yellow": 0.5}
         self._filter_volatility_ema_span = 60.0
         self._filter_volatility_drop_pct = 0.0
         self._filter_volume_drop_pct = 0.95
@@ -2660,11 +2304,6 @@ class Short:
             "entry_trailing_retracement_we_weight": self._entry_trailing_retracement_we_weight,
             "entry_trailing_retracement_volatility_weight": self._entry_trailing_retracement_volatility_weight,
             "entry_volatility_ema_span_hours": self._entry_volatility_ema_span_hours,
-            "hsl_enabled": self._hsl_enabled,
-            "hsl_no_restart_drawdown_threshold": self._hsl_no_restart_drawdown_threshold,
-            "hsl_orange_tier_mode": self._hsl_orange_tier_mode,
-            "hsl_panic_close_order_type": self._hsl_panic_close_order_type,
-            "hsl_tier_ratios": self._hsl_tier_ratios,
             "filter_volatility_ema_span": self._filter_volatility_ema_span,
             "filter_volatility_drop_pct": self._filter_volatility_drop_pct,
             "filter_volume_drop_pct": self._filter_volume_drop_pct,
@@ -2747,16 +2386,6 @@ class Short:
             self.entry_trailing_retracement_volatility_weight = new_short["entry_trailing_retracement_volatility_weight"]
         if "entry_volatility_ema_span_hours" in new_short:
             self.entry_volatility_ema_span_hours = new_short["entry_volatility_ema_span_hours"]
-        if "hsl_enabled" in new_short:
-            self.hsl_enabled = new_short["hsl_enabled"]
-        if "hsl_no_restart_drawdown_threshold" in new_short:
-            self.hsl_no_restart_drawdown_threshold = new_short["hsl_no_restart_drawdown_threshold"]
-        if "hsl_orange_tier_mode" in new_short:
-            self.hsl_orange_tier_mode = new_short["hsl_orange_tier_mode"]
-        if "hsl_panic_close_order_type" in new_short:
-            self.hsl_panic_close_order_type = new_short["hsl_panic_close_order_type"]
-        if "hsl_tier_ratios" in new_short:
-            self.hsl_tier_ratios = new_short["hsl_tier_ratios"]
         # Fix for old configs
         elif "entry_grid_spacing_log_span_hours" in new_short:
             self.entry_volatility_ema_span_hours = new_short["entry_grid_spacing_log_span_hours"]
@@ -2849,16 +2478,6 @@ class Short:
     def entry_trailing_retracement_volatility_weight(self): return self._entry_trailing_retracement_volatility_weight
     @property
     def entry_volatility_ema_span_hours(self): return self._entry_volatility_ema_span_hours
-    @property
-    def hsl_enabled(self): return self._hsl_enabled
-    @property
-    def hsl_no_restart_drawdown_threshold(self): return self._hsl_no_restart_drawdown_threshold
-    @property
-    def hsl_orange_tier_mode(self): return self._hsl_orange_tier_mode
-    @property
-    def hsl_panic_close_order_type(self): return self._hsl_panic_close_order_type
-    @property
-    def hsl_tier_ratios(self): return self._hsl_tier_ratios
     @property
     def filter_volatility_ema_span(self): return self._filter_volatility_ema_span
     @property
@@ -2982,30 +2601,6 @@ class Short:
     def entry_volatility_ema_span_hours(self, new_entry_volatility_ema_span_hours):
         self._entry_volatility_ema_span_hours = new_entry_volatility_ema_span_hours
         self._short["entry_volatility_ema_span_hours"] = self._entry_volatility_ema_span_hours
-    @hsl_enabled.setter
-    def hsl_enabled(self, new_hsl_enabled):
-        self._hsl_enabled = bool(new_hsl_enabled)
-        self._short["hsl_enabled"] = self._hsl_enabled
-    @hsl_no_restart_drawdown_threshold.setter
-    def hsl_no_restart_drawdown_threshold(self, new_hsl_no_restart_drawdown_threshold):
-        self._hsl_no_restart_drawdown_threshold = float(new_hsl_no_restart_drawdown_threshold)
-        self._short["hsl_no_restart_drawdown_threshold"] = self._hsl_no_restart_drawdown_threshold
-    @hsl_orange_tier_mode.setter
-    def hsl_orange_tier_mode(self, new_hsl_orange_tier_mode):
-        self._hsl_orange_tier_mode = new_hsl_orange_tier_mode
-        self._short["hsl_orange_tier_mode"] = self._hsl_orange_tier_mode
-    @hsl_panic_close_order_type.setter
-    def hsl_panic_close_order_type(self, new_hsl_panic_close_order_type):
-        self._hsl_panic_close_order_type = new_hsl_panic_close_order_type
-        self._short["hsl_panic_close_order_type"] = self._hsl_panic_close_order_type
-    @hsl_tier_ratios.setter
-    def hsl_tier_ratios(self, new_hsl_tier_ratios):
-        current = dict(self._hsl_tier_ratios)
-        if isinstance(new_hsl_tier_ratios, dict):
-            current["orange"] = float(new_hsl_tier_ratios.get("orange", current.get("orange", 0.75)))
-            current["yellow"] = float(new_hsl_tier_ratios.get("yellow", current.get("yellow", 0.5)))
-        self._hsl_tier_ratios = current
-        self._short["hsl_tier_ratios"] = self._hsl_tier_ratios
     @filter_volatility_ema_span.setter
     def filter_volatility_ema_span(self, new_filter_volatility_ema_span):
         self._filter_volatility_ema_span = new_filter_volatility_ema_span
@@ -3093,11 +2688,25 @@ class ApprovedCoins:
     def short(self): return self._short
     @long.setter
     def long(self, new_long):
-        self._long = [str(coin).strip() for coin in new_long if str(coin).strip()]
+        seen = set()
+        result = []
+        for coin in new_long:
+            n = normalize_symbol(str(coin).strip())
+            if n and n not in seen:
+                seen.add(n)
+                result.append(n)
+        self._long = result
         self._approved_coins["long"] = self._long
     @short.setter
     def short(self, new_short):
-        self._short = [str(coin).strip() for coin in new_short if str(coin).strip()]
+        seen = set()
+        result = []
+        for coin in new_short:
+            n = normalize_symbol(str(coin).strip())
+            if n and n not in seen:
+                seen.add(n)
+                result.append(n)
+        self._short = result
         self._approved_coins["short"] = self._short
 
 class IgnoredCoins:
@@ -3131,11 +2740,25 @@ class IgnoredCoins:
     def short(self): return self._short
     @long.setter
     def long(self, new_long):
-        self._long = new_long
+        seen = set()
+        result = []
+        for coin in new_long:
+            n = normalize_symbol(str(coin).strip())
+            if n and n not in seen:
+                seen.add(n)
+                result.append(n)
+        self._long = result
         self._ignored_coins["long"] = self._long
     @short.setter
     def short(self, new_short):
-        self._short = new_short
+        seen = set()
+        result = []
+        for coin in new_short:
+            n = normalize_symbol(str(coin).strip())
+            if n and n not in seen:
+                seen.add(n)
+                result.append(n)
+        self._short = result
         self._ignored_coins["short"] = self._short
 
 class Live:
@@ -3150,12 +2773,8 @@ class Live:
         self._forced_mode_short = ""
         # PB7 live defaults (see pb7/src/config_utils.py)
         self._hedge_mode = True
-        self._hsl_position_during_cooldown_policy = "panic"
-        self._hsl_signal_mode = "unified"
         self._ignored_coins = IgnoredCoins()
         self._leverage = 10.0
-        self._margin_mode_preference = "cross"
-        self._market_order_near_touch_threshold = 0.001
         self._market_orders_allowed = True
         self._max_disk_candles_per_symbol_per_tf = 2000000
         self._max_memory_candles_per_symbol = 20000
@@ -3191,12 +2810,8 @@ class Live:
             "forced_mode_long": self._forced_mode_long,
             "forced_mode_short": self._forced_mode_short,
             "hedge_mode": self._hedge_mode,
-            "hsl_position_during_cooldown_policy": self._hsl_position_during_cooldown_policy,
-            "hsl_signal_mode": self._hsl_signal_mode,
             "ignored_coins": self._ignored_coins._ignored_coins,
             "leverage": self._leverage,
-            "margin_mode_preference": self._margin_mode_preference,
-            "market_order_near_touch_threshold": self._market_order_near_touch_threshold,
             "market_orders_allowed": self._market_orders_allowed,
             "max_disk_candles_per_symbol_per_tf": self._max_disk_candles_per_symbol_per_tf,
             "max_memory_candles_per_symbol": self._max_memory_candles_per_symbol,
@@ -3247,18 +2862,10 @@ class Live:
             self.forced_mode_short = new_live["forced_mode_short"]
         if "hedge_mode" in new_live:
             self.hedge_mode = new_live["hedge_mode"]
-        if "hsl_position_during_cooldown_policy" in new_live:
-            self.hsl_position_during_cooldown_policy = new_live["hsl_position_during_cooldown_policy"]
-        if "hsl_signal_mode" in new_live:
-            self.hsl_signal_mode = new_live["hsl_signal_mode"]
         if "ignored_coins" in new_live:
             self.ignored_coins = new_live["ignored_coins"]
         if "leverage" in new_live:
             self.leverage = new_live["leverage"]
-        if "margin_mode_preference" in new_live:
-            self.margin_mode_preference = new_live["margin_mode_preference"]
-        if "market_order_near_touch_threshold" in new_live:
-            self.market_order_near_touch_threshold = new_live["market_order_near_touch_threshold"]
         if "market_orders_allowed" in new_live:
             self.market_orders_allowed = new_live["market_orders_allowed"]
         if "max_disk_candles_per_symbol_per_tf" in new_live:
@@ -3325,17 +2932,9 @@ class Live:
     @property
     def hedge_mode(self): return self._hedge_mode
     @property
-    def hsl_position_during_cooldown_policy(self): return self._hsl_position_during_cooldown_policy
-    @property
-    def hsl_signal_mode(self): return self._hsl_signal_mode
-    @property
     def ignored_coins(self): return self._ignored_coins
     @property
     def leverage(self): return self._leverage
-    @property
-    def margin_mode_preference(self): return self._margin_mode_preference
-    @property
-    def market_order_near_touch_threshold(self): return self._market_order_near_touch_threshold
     @property
     def market_orders_allowed(self): return self._market_orders_allowed
     @property
@@ -3419,14 +3018,6 @@ class Live:
     def hedge_mode(self, new_hedge_mode):
         self._hedge_mode = bool(new_hedge_mode)
         self._live["hedge_mode"] = self._hedge_mode
-    @hsl_position_during_cooldown_policy.setter
-    def hsl_position_during_cooldown_policy(self, new_hsl_position_during_cooldown_policy):
-        self._hsl_position_during_cooldown_policy = new_hsl_position_during_cooldown_policy
-        self._live["hsl_position_during_cooldown_policy"] = self._hsl_position_during_cooldown_policy
-    @hsl_signal_mode.setter
-    def hsl_signal_mode(self, new_hsl_signal_mode):
-        self._hsl_signal_mode = new_hsl_signal_mode
-        self._live["hsl_signal_mode"] = self._hsl_signal_mode
     @ignored_coins.setter
     def ignored_coins(self, new_ignored_coins):
         self._ignored_coins.ignored_coins = new_ignored_coins
@@ -3435,16 +3026,6 @@ class Live:
     def leverage(self, new_leverage):
         self._leverage = new_leverage
         self._live["leverage"] = self._leverage
-    @margin_mode_preference.setter
-    def margin_mode_preference(self, new_margin_mode_preference):
-        self._margin_mode_preference = new_margin_mode_preference
-        self._live["margin_mode_preference"] = self._margin_mode_preference
-    @market_order_near_touch_threshold.setter
-    def market_order_near_touch_threshold(self, new_market_order_near_touch_threshold):
-        self._market_order_near_touch_threshold = max(
-            0.0, 0.001 if new_market_order_near_touch_threshold in (None, "") else float(new_market_order_near_touch_threshold)
-        )
-        self._live["market_order_near_touch_threshold"] = self._market_order_near_touch_threshold
     @market_orders_allowed.setter
     def market_orders_allowed(self, new_market_orders_allowed):
         self._market_orders_allowed = new_market_orders_allowed
@@ -3549,92 +3130,373 @@ class Optimize:
         self._bounds = Bounds()
         self._limits = []  # New list format: [{"metric": "x", "penalize_if": "greater_than", "value": 0.5}, ...]
         # optimize
+        self._backend = "pymoo"
         self._compress_results_file = True
-        self._crossover_probability = 0.7
+        self._crossover_probability = 0.64
         self._crossover_eta = 20.0
         self._enable_overrides = []
-        self._iters = 100000
-        self._mutation_probability = 0.45
+        self._fixed_params = []
+        self._fixed_runtime_overrides = deepcopy(DEFAULT_OPTIMIZE_FIXED_RUNTIME_OVERRIDES)
+        self._iters = 500000
+        self._mutation_probability = 0.34
         self._mutation_eta = 20.0
-        self._mutation_indpb = 0.0
-        self._n_cpus = 5
+        self._mutation_indpb = 0.0135135135
+        self._max_pending_starting_evals_per_cpu = 1
+        self._n_cpus = min(6, multiprocessing.cpu_count())
         self._offspring_multiplier = 1.0
-        self._pareto_max_size = 250
-        self._population_size = 1000
-        self._round_to_n_significant_digits = 5
+        self._pareto_max_size = 1000
+        self._population_size = None
+        self._pymoo = deepcopy(DEFAULT_OPTIMIZE_PYMOO)
+        self._round_to_n_significant_digits = 3
         # scoring
-        self._scoring = ["loss_profit_ratio", "mdg_w", "sharpe_ratio"]
+        self._scoring = deepcopy(DEFAULT_OPTIMIZE_SCORING)
         self._write_all_results = True
 
+        self._optimize = {}
+        self._sync_optimize()
+
+    def __repr__(self):
+        return str(self._optimize)
+
+    @staticmethod
+    def _normalize_string_list(values) -> list[str]:
+        if not isinstance(values, (list, tuple)):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = str(value).strip()
+            if not text or text in seen:
+                continue
+            normalized.append(text)
+            seen.add(text)
+        return normalized
+
+    @staticmethod
+    def _normalize_backend(value) -> str:
+        backend = str(value or "pymoo").strip().lower()
+        if backend not in OPTIMIZE_BACKENDS:
+            return "pymoo"
+        return backend
+
+    @staticmethod
+    def _normalize_population_size(value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"", "none", "null", "auto"}:
+                return None
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                return None
+        elif value is None:
+            return None
+        else:
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                return None
+        return value if value > 0 else None
+
+    @staticmethod
+    def _normalize_positive_int(value, default: int, minimum: int = 1) -> int:
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return default
+        if normalized < minimum:
+            return default
+        return normalized
+
+    @staticmethod
+    def _normalize_positive_float(value, default: float) -> float:
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        if normalized <= 0.0:
+            return float(default)
+        return normalized
+
+    @staticmethod
+    def _normalize_probability(value, default: float) -> float:
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        if not 0.0 <= normalized <= 1.0:
+            return float(default)
+        return normalized
+
+    @staticmethod
+    def _normalize_pymoo_algorithm(value) -> str:
+        algorithm = str(value or "auto").strip().lower()
+        if algorithm not in {"auto", "nsga2", "nsga3"}:
+            return "auto"
+        return algorithm
+
+    @staticmethod
+    def _normalize_pymoo_probability(value, *, default, allow_auto: bool = False):
+        if allow_auto and isinstance(value, str) and value.strip().lower() == "auto":
+            return "auto"
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not 0.0 <= normalized <= 1.0:
+            return default
+        return normalized
+
+    @staticmethod
+    def _normalize_pymoo_n_partitions(value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized == "auto":
+                return "auto"
+            try:
+                value = int(normalized)
+            except (TypeError, ValueError):
+                return "auto"
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return "auto"
+        if normalized < 1:
+            return "auto"
+        return normalized
+
+    @staticmethod
+    def _normalize_pymoo_ref_dir_method(value) -> str:
+        method = str(value or "das_dennis").strip().lower().replace("-", "_")
+        if method != "das_dennis":
+            return "das_dennis"
+        return method
+
+    @staticmethod
+    def _normalize_fixed_runtime_overrides(values) -> dict:
+        if not isinstance(values, dict):
+            return {}
+        normalized = {}
+        for key, value in values.items():
+            text = str(key).strip()
+            if not text:
+                continue
+            normalized[text] = value
+        return normalized
+
+    def _legacy_optimize_source(self) -> dict:
+        return {
+            "crossover_eta": self._crossover_eta,
+            "crossover_probability": self._crossover_probability,
+            "mutation_eta": self._mutation_eta,
+            "mutation_indpb": self._mutation_indpb,
+        }
+
+    def _normalize_pymoo(self, raw_pymoo=None, *, source_optimize=None) -> dict:
+        source = source_optimize if isinstance(source_optimize, dict) else self._legacy_optimize_source()
+        pymoo_cfg = deepcopy(raw_pymoo) if isinstance(raw_pymoo, dict) else {}
+        shared = deepcopy(pymoo_cfg.get("shared", {})) if isinstance(pymoo_cfg.get("shared"), dict) else {}
+        algorithms = (
+            deepcopy(pymoo_cfg.get("algorithms", {}))
+            if isinstance(pymoo_cfg.get("algorithms"), dict)
+            else {}
+        )
+        nsga3_cfg = (
+            deepcopy(algorithms.get("nsga3", {}))
+            if isinstance(algorithms.get("nsga3"), dict)
+            else {}
+        )
+        ref_dirs_cfg = (
+            deepcopy(nsga3_cfg.get("ref_dirs", {}))
+            if isinstance(nsga3_cfg.get("ref_dirs"), dict)
+            else {}
+        )
+
+        shared_defaults = DEFAULT_OPTIMIZE_PYMOO["shared"]
+        ref_dir_defaults = DEFAULT_OPTIMIZE_PYMOO["algorithms"]["nsga3"]["ref_dirs"]
+
+        legacy_mutation_indpb = source.get("mutation_indpb")
+        try:
+            legacy_mutation_indpb = float(legacy_mutation_indpb)
+        except (TypeError, ValueError):
+            legacy_mutation_indpb = None
+
+        mutation_prob_var = shared.get("mutation_prob_var")
+        if mutation_prob_var is None:
+            if legacy_mutation_indpb is not None and legacy_mutation_indpb > 0.0:
+                mutation_prob_var = legacy_mutation_indpb
+            else:
+                mutation_prob_var = shared_defaults["mutation_prob_var"]
+
+        return {
+            "algorithm": self._normalize_pymoo_algorithm(
+                pymoo_cfg.get("algorithm", DEFAULT_OPTIMIZE_PYMOO["algorithm"])
+            ),
+            "shared": {
+                "crossover_eta": self._normalize_positive_float(
+                    shared.get(
+                        "crossover_eta",
+                        source.get("crossover_eta", shared_defaults["crossover_eta"]),
+                    ),
+                    shared_defaults["crossover_eta"],
+                ),
+                "crossover_prob_var": self._normalize_pymoo_probability(
+                    shared.get(
+                        "crossover_prob_var",
+                        source.get("crossover_probability", shared_defaults["crossover_prob_var"]),
+                    ),
+                    default=shared_defaults["crossover_prob_var"],
+                ),
+                "mutation_eta": self._normalize_positive_float(
+                    shared.get(
+                        "mutation_eta",
+                        source.get("mutation_eta", shared_defaults["mutation_eta"]),
+                    ),
+                    shared_defaults["mutation_eta"],
+                ),
+                "mutation_prob_var": self._normalize_pymoo_probability(
+                    mutation_prob_var,
+                    default=shared_defaults["mutation_prob_var"],
+                    allow_auto=True,
+                ),
+                "eliminate_duplicates": bool(
+                    shared.get("eliminate_duplicates", shared_defaults["eliminate_duplicates"])
+                ),
+            },
+            "algorithms": {
+                "nsga2": {},
+                "nsga3": {
+                    "ref_dirs": {
+                        "method": self._normalize_pymoo_ref_dir_method(
+                            ref_dirs_cfg.get("method", ref_dir_defaults["method"])
+                        ),
+                        "n_partitions": self._normalize_pymoo_n_partitions(
+                            ref_dirs_cfg.get("n_partitions", ref_dir_defaults["n_partitions"])
+                        ),
+                    }
+                },
+            },
+        }
+
+    def _sync_optimize(self):
         self._optimize = {
             "bounds": self._bounds.bounds,
+            "backend": self._backend,
             "compress_results_file": self._compress_results_file,
             "crossover_probability": self._crossover_probability,
             "crossover_eta": self._crossover_eta,
-            "enable_overrides": self._enable_overrides,
+            "enable_overrides": list(self._enable_overrides),
+            "fixed_params": list(self._fixed_params),
+            "fixed_runtime_overrides": deepcopy(self._fixed_runtime_overrides),
             "iters": self._iters,
-            "limits": self._limits,
+            "limits": deepcopy(self._limits),
             "mutation_probability": self._mutation_probability,
             "mutation_eta": self._mutation_eta,
             "mutation_indpb": self._mutation_indpb,
+            "max_pending_starting_evals_per_cpu": self._max_pending_starting_evals_per_cpu,
             "n_cpus": self._n_cpus,
             "offspring_multiplier": self._offspring_multiplier,
             "pareto_max_size": self._pareto_max_size,
             "population_size": self._population_size,
+            "pymoo": deepcopy(self._pymoo),
             "round_to_n_significant_digits": self._round_to_n_significant_digits,
-            "scoring": self._scoring,
+            "scoring": deepcopy(self._scoring),
             "write_all_results": self._write_all_results
         }
-    
-    def __repr__(self):
-        return str(self._optimize)
 
     @property
     def optimize(self):
-        # Ensure bounds are always exported in PB7-compatible form.
-        # This avoids stale optimize["bounds"] when bounds were loaded as [lo, hi]
-        # and later edited in the UI to include a positive step.
-        self._optimize["bounds"] = self._bounds.bounds
+        self._sync_optimize()
         return self._optimize
     @optimize.setter
     def optimize(self, new_optimize):
+        if not isinstance(new_optimize, dict):
+            return
         if "bounds" in new_optimize:
             self.bounds = new_optimize["bounds"]
+        if "backend" in new_optimize:
+            self._backend = self._normalize_backend(new_optimize["backend"])
         if "compress_results_file" in new_optimize:
-            self.compress_results_file = new_optimize["compress_results_file"]
+            self._compress_results_file = bool(new_optimize["compress_results_file"])
         if "crossover_probability" in new_optimize:
-            self.crossover_probability = new_optimize["crossover_probability"]
+            self._crossover_probability = self._normalize_probability(
+                new_optimize["crossover_probability"],
+                self._crossover_probability,
+            )
         if "crossover_eta" in new_optimize:
-            self.crossover_eta = new_optimize["crossover_eta"]
+            self._crossover_eta = self._normalize_positive_float(
+                new_optimize["crossover_eta"],
+                self._crossover_eta,
+            )
         if "enable_overrides" in new_optimize:
-            self.enable_overrides = new_optimize["enable_overrides"]
+            self._enable_overrides = self._normalize_string_list(new_optimize["enable_overrides"])
+        if "fixed_params" in new_optimize:
+            self._fixed_params = self._normalize_string_list(new_optimize["fixed_params"])
+        if "fixed_runtime_overrides" in new_optimize:
+            self._fixed_runtime_overrides = self._normalize_fixed_runtime_overrides(
+                new_optimize["fixed_runtime_overrides"]
+            )
         if "iters" in new_optimize:
-            self.iters = new_optimize["iters"]
+            self._iters = self._normalize_positive_int(new_optimize["iters"], self._iters)
         if "limits" in new_optimize:
             self.limits = new_optimize["limits"]
         if "mutation_probability" in new_optimize:
-            self.mutation_probability = new_optimize["mutation_probability"]
+            self._mutation_probability = self._normalize_probability(
+                new_optimize["mutation_probability"],
+                self._mutation_probability,
+            )
         if "mutation_eta" in new_optimize:
-            self.mutation_eta = new_optimize["mutation_eta"]
+            self._mutation_eta = self._normalize_positive_float(
+                new_optimize["mutation_eta"],
+                self._mutation_eta,
+            )
         if "mutation_indpb" in new_optimize:
-            self.mutation_indpb = new_optimize["mutation_indpb"]
+            self._mutation_indpb = self._normalize_probability(
+                new_optimize["mutation_indpb"],
+                self._mutation_indpb,
+            )
+        if "max_pending_starting_evals_per_cpu" in new_optimize:
+            self._max_pending_starting_evals_per_cpu = self._normalize_positive_int(
+                new_optimize["max_pending_starting_evals_per_cpu"],
+                self._max_pending_starting_evals_per_cpu,
+            )
         if "n_cpus" in new_optimize:
             self.n_cpus = new_optimize["n_cpus"]
         if "offspring_multiplier" in new_optimize:
-            self.offspring_multiplier = new_optimize["offspring_multiplier"]
+            self._offspring_multiplier = self._normalize_positive_float(
+                new_optimize["offspring_multiplier"],
+                self._offspring_multiplier,
+            )
         if "pareto_max_size" in new_optimize:
-            self.pareto_max_size = new_optimize["pareto_max_size"]
+            self._pareto_max_size = self._normalize_positive_int(
+                new_optimize["pareto_max_size"],
+                self._pareto_max_size,
+            )
         if "population_size" in new_optimize:
-            self.population_size = new_optimize["population_size"]
+            self._population_size = self._normalize_population_size(new_optimize["population_size"])
         if "round_to_n_significant_digits" in new_optimize:
-            self.round_to_n_significant_digits = new_optimize["round_to_n_significant_digits"]
+            self._round_to_n_significant_digits = self._normalize_positive_int(
+                new_optimize["round_to_n_significant_digits"],
+                self._round_to_n_significant_digits,
+            )
         if "scoring" in new_optimize:
-            self.scoring = new_optimize["scoring"]
+            self._scoring = normalize_optimize_scoring_entries(new_optimize["scoring"])
+        if "pymoo" in new_optimize or any(
+            key in new_optimize
+            for key in ("crossover_eta", "crossover_probability", "mutation_eta", "mutation_indpb")
+        ):
+            self._pymoo = self._normalize_pymoo(
+                new_optimize.get("pymoo"),
+                source_optimize=new_optimize,
+            )
         if "write_all_results" in new_optimize:
-            self.write_all_results = new_optimize["write_all_results"]
+            self._write_all_results = bool(new_optimize["write_all_results"])
+        self._sync_optimize()
 
     @property
     def bounds(self): return self._bounds
+    @property
+    def backend(self): return self._backend
     @property
     def compress_results_file(self): return self._compress_results_file
     @property
@@ -3646,6 +3508,10 @@ class Optimize:
     @property
     def enable_overrides(self): return self._enable_overrides
     @property
+    def fixed_params(self): return self._fixed_params
+    @property
+    def fixed_runtime_overrides(self): return self._fixed_runtime_overrides
+    @property
     def iters(self): return self._iters
     @property
     def mutation_probability(self): return self._mutation_probability
@@ -3654,9 +3520,12 @@ class Optimize:
     @property
     def mutation_indpb(self): return self._mutation_indpb
     @property
+    def max_pending_starting_evals_per_cpu(self): return self._max_pending_starting_evals_per_cpu
+    @property
     def n_cpus(self):
         if self._n_cpus > multiprocessing.cpu_count():
-            self.n_cpus = multiprocessing.cpu_count()
+            self._n_cpus = multiprocessing.cpu_count()
+            self._sync_optimize()
         return self._n_cpus
     @property
     def offspring_multiplier(self): return self._offspring_multiplier
@@ -3664,6 +3533,8 @@ class Optimize:
     def pareto_max_size(self): return self._pareto_max_size
     @property
     def population_size(self): return self._population_size
+    @property
+    def pymoo(self): return self._pymoo
     @property
     def round_to_n_significant_digits(self): return self._round_to_n_significant_digits
     @property
@@ -3674,11 +3545,15 @@ class Optimize:
     @bounds.setter
     def bounds(self, new_bounds):
         self._bounds.bounds = new_bounds
-        self._optimize["bounds"] = self._bounds.bounds
+        self._sync_optimize()
+    @backend.setter
+    def backend(self, new_backend):
+        self._backend = self._normalize_backend(new_backend)
+        self._sync_optimize()
     @compress_results_file.setter
     def compress_results_file(self, new_compress_results_file):
-        self._compress_results_file = new_compress_results_file
-        self._optimize["compress_results_file"] = self._compress_results_file
+        self._compress_results_file = bool(new_compress_results_file)
+        self._sync_optimize()
     @limits.setter
     def limits(self, new_limits):
         # Convert legacy dict format to new list format
@@ -3697,7 +3572,7 @@ class Optimize:
             self._limits = normalized
         else:
             self._limits = []
-        self._optimize["limits"] = self._limits
+        self._sync_optimize()
 
     def _convert_legacy_limits(self, limits_dict: dict) -> list:
         """Convert legacy dict format to new list format.
@@ -3775,62 +3650,117 @@ class Optimize:
         return entries
     @crossover_probability.setter
     def crossover_probability(self, new_crossover_probability):
-        self._crossover_probability = new_crossover_probability
-        self._optimize["crossover_probability"] = self._crossover_probability
+        self._crossover_probability = self._normalize_probability(
+            new_crossover_probability,
+            self._crossover_probability,
+        )
+        self._pymoo["shared"]["crossover_prob_var"] = self._normalize_pymoo_probability(
+            self._crossover_probability,
+            default=DEFAULT_OPTIMIZE_PYMOO["shared"]["crossover_prob_var"],
+        )
+        self._sync_optimize()
     @crossover_eta.setter
     def crossover_eta(self, new_crossover_eta):
-        self._crossover_eta = new_crossover_eta
-        self._optimize["crossover_eta"] = self._crossover_eta
+        self._crossover_eta = self._normalize_positive_float(new_crossover_eta, self._crossover_eta)
+        self._pymoo["shared"]["crossover_eta"] = self._normalize_positive_float(
+            self._crossover_eta,
+            DEFAULT_OPTIMIZE_PYMOO["shared"]["crossover_eta"],
+        )
+        self._sync_optimize()
     @enable_overrides.setter
     def enable_overrides(self, new_enable_overrides):
-        self._enable_overrides = new_enable_overrides
-        self._optimize["enable_overrides"] = self._enable_overrides
+        self._enable_overrides = self._normalize_string_list(new_enable_overrides)
+        self._sync_optimize()
+    @fixed_params.setter
+    def fixed_params(self, new_fixed_params):
+        self._fixed_params = self._normalize_string_list(new_fixed_params)
+        self._sync_optimize()
+    @fixed_runtime_overrides.setter
+    def fixed_runtime_overrides(self, new_fixed_runtime_overrides):
+        self._fixed_runtime_overrides = self._normalize_fixed_runtime_overrides(
+            new_fixed_runtime_overrides
+        )
+        self._sync_optimize()
     @iters.setter
     def iters(self, new_iters):
-        self._iters = new_iters
-        self._optimize["iters"] = self._iters
+        self._iters = self._normalize_positive_int(new_iters, self._iters)
+        self._sync_optimize()
     @mutation_probability.setter
     def mutation_probability(self, new_mutation_probability):
-        self._mutation_probability = new_mutation_probability
-        self._optimize["mutation_probability"] = self._mutation_probability
+        self._mutation_probability = self._normalize_probability(
+            new_mutation_probability,
+            self._mutation_probability,
+        )
+        self._sync_optimize()
     @mutation_eta.setter
     def mutation_eta(self, new_mutation_eta):
-        self._mutation_eta = new_mutation_eta
-        self._optimize["mutation_eta"] = self._mutation_eta
+        self._mutation_eta = self._normalize_positive_float(new_mutation_eta, self._mutation_eta)
+        self._pymoo["shared"]["mutation_eta"] = self._normalize_positive_float(
+            self._mutation_eta,
+            DEFAULT_OPTIMIZE_PYMOO["shared"]["mutation_eta"],
+        )
+        self._sync_optimize()
     @mutation_indpb.setter
     def mutation_indpb(self, new_mutation_indpb):
-        self._mutation_indpb = new_mutation_indpb
-        self._optimize["mutation_indpb"] = self._mutation_indpb
+        self._mutation_indpb = self._normalize_probability(new_mutation_indpb, self._mutation_indpb)
+        self._pymoo["shared"]["mutation_prob_var"] = self._normalize_pymoo_probability(
+            self._mutation_indpb if self._mutation_indpb > 0.0 else "auto",
+            default=DEFAULT_OPTIMIZE_PYMOO["shared"]["mutation_prob_var"],
+            allow_auto=True,
+        )
+        self._sync_optimize()
+    @max_pending_starting_evals_per_cpu.setter
+    def max_pending_starting_evals_per_cpu(self, new_max_pending):
+        self._max_pending_starting_evals_per_cpu = self._normalize_positive_int(
+            new_max_pending,
+            self._max_pending_starting_evals_per_cpu,
+        )
+        self._sync_optimize()
     @n_cpus.setter
     def n_cpus(self, new_n_cpus):
-        self._n_cpus = new_n_cpus
-        self._optimize["n_cpus"] = self._n_cpus
-        if self._n_cpus > multiprocessing.cpu_count():
-            self.n_cpus = multiprocessing.cpu_count()
+        cpu_count = multiprocessing.cpu_count()
+        self._n_cpus = min(
+            self._normalize_positive_int(new_n_cpus, self._n_cpus),
+            cpu_count,
+        )
+        self._sync_optimize()
     @offspring_multiplier.setter
     def offspring_multiplier(self, new_offspring_multiplier):
-        self._offspring_multiplier = new_offspring_multiplier
-        self._optimize["offspring_multiplier"] = self._offspring_multiplier
+        self._offspring_multiplier = self._normalize_positive_float(
+            new_offspring_multiplier,
+            self._offspring_multiplier,
+        )
+        self._sync_optimize()
     @pareto_max_size.setter
     def pareto_max_size(self, new_pareto_max_size):
-        self._pareto_max_size = new_pareto_max_size
-        self._optimize["pareto_max_size"] = self._pareto_max_size
+        self._pareto_max_size = self._normalize_positive_int(
+            new_pareto_max_size,
+            self._pareto_max_size,
+        )
+        self._sync_optimize()
     @population_size.setter
     def population_size(self, new_population_size):
-        self._population_size = new_population_size
-        self._optimize["population_size"] = self._population_size
+        self._population_size = self._normalize_population_size(new_population_size)
+        self._sync_optimize()
+    @pymoo.setter
+    def pymoo(self, new_pymoo):
+        self._pymoo = self._normalize_pymoo(new_pymoo)
+        self._sync_optimize()
     @round_to_n_significant_digits.setter
     def round_to_n_significant_digits(self, new_round_to_n_significant_digits):
-        self._round_to_n_significant_digits = new_round_to_n_significant_digits
-        self._optimize["round_to_n_significant_digits"] = self._round_to_n_significant_digits
+        self._round_to_n_significant_digits = self._normalize_positive_int(
+            new_round_to_n_significant_digits,
+            self._round_to_n_significant_digits,
+        )
+        self._sync_optimize()
     @scoring.setter
     def scoring(self, new_scoring):
-        self._scoring = new_scoring
-        self._optimize["scoring"] = self._scoring
+        self._scoring = normalize_optimize_scoring_entries(new_scoring)
+        self._sync_optimize()
     @write_all_results.setter
     def write_all_results(self, new_write_all_results):
-        self._write_all_results = new_write_all_results
-        self._optimize["write_all_results"] = self._write_all_results
+        self._write_all_results = bool(new_write_all_results)
+        self._sync_optimize()
 
 class Bounds:
 
@@ -3884,14 +3814,14 @@ class Bounds:
     CLOSE_TRAILING_THRESHOLD_PCT_WIDGET_STEP = 0.00001
 
     EMA_SPAN_0_MIN = 1.0
-    EMA_SPAN_0_MAX = 20000.0
+    EMA_SPAN_0_MAX = 10000.0
     EMA_SPAN_0_STEP = 1.0
     EMA_SPAN_0_ROUND = 1
     EMA_SPAN_0_FORMAT = f'%.{EMA_SPAN_0_ROUND}f'
     EMA_SPAN_0_WIDGET_STEP = 1.0
 
     EMA_SPAN_1_MIN = 1.0
-    EMA_SPAN_1_MAX = 20000.0
+    EMA_SPAN_1_MAX = 10000.0
     EMA_SPAN_1_STEP = 1.0
     EMA_SPAN_1_ROUND = 1
     EMA_SPAN_1_FORMAT = f'%.{EMA_SPAN_1_ROUND}f'
@@ -4029,34 +3959,6 @@ class Bounds:
     FILTER_VOLUME_EMA_SPAN_ROUND = 0
     FILTER_VOLUME_EMA_SPAN_FORMAT = f'%.{FILTER_VOLUME_EMA_SPAN_ROUND}f'
     FILTER_VOLUME_EMA_SPAN_WIDGET_STEP = 0.1
-
-    FORAGER_SCORE_WEIGHT_MIN = 0.0
-    FORAGER_SCORE_WEIGHT_MAX = 1.0
-    FORAGER_SCORE_WEIGHT_STEP = 0.01
-    FORAGER_SCORE_WEIGHT_ROUND = 2
-    FORAGER_SCORE_WEIGHT_FORMAT = f'%.{FORAGER_SCORE_WEIGHT_ROUND}f'
-    FORAGER_SCORE_WEIGHT_WIDGET_STEP = 0.00001
-
-    HSL_COOLDOWN_MINUTES_AFTER_RED_MIN = 1.0
-    HSL_COOLDOWN_MINUTES_AFTER_RED_MAX = 2880.0
-    HSL_COOLDOWN_MINUTES_AFTER_RED_STEP = 1.0
-    HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND = 0
-    HSL_COOLDOWN_MINUTES_AFTER_RED_FORMAT = f'%.{HSL_COOLDOWN_MINUTES_AFTER_RED_ROUND}f'
-    HSL_COOLDOWN_MINUTES_AFTER_RED_WIDGET_STEP = 1.0
-
-    HSL_EMA_SPAN_MINUTES_MIN = 1.0
-    HSL_EMA_SPAN_MINUTES_MAX = 2880.0
-    HSL_EMA_SPAN_MINUTES_STEP = 1.0
-    HSL_EMA_SPAN_MINUTES_ROUND = 0
-    HSL_EMA_SPAN_MINUTES_FORMAT = f'%.{HSL_EMA_SPAN_MINUTES_ROUND}f'
-    HSL_EMA_SPAN_MINUTES_WIDGET_STEP = 1.0
-
-    HSL_RED_THRESHOLD_MIN = 0.0
-    HSL_RED_THRESHOLD_MAX = 1.0
-    HSL_RED_THRESHOLD_STEP = 0.001
-    HSL_RED_THRESHOLD_ROUND = 3
-    HSL_RED_THRESHOLD_FORMAT = f'%.{HSL_RED_THRESHOLD_ROUND}f'
-    HSL_RED_THRESHOLD_WIDGET_STEP = 0.00001
 
     N_POSITIONS_MIN = 0.0
     N_POSITIONS_MAX = 100.0
@@ -4207,24 +4109,6 @@ class Bounds:
         self._long_filter_volume_ema_span_0 = 10.0
         self._long_filter_volume_ema_span_1 = 360.0
         self._long_filter_volume_ema_span_step = 0.0
-        self._long_forager_score_weights_ema_readiness_0 = 0.0
-        self._long_forager_score_weights_ema_readiness_1 = 1.0
-        self._long_forager_score_weights_ema_readiness_step = 0.01
-        self._long_forager_score_weights_volatility_0 = 0.0
-        self._long_forager_score_weights_volatility_1 = 1.0
-        self._long_forager_score_weights_volatility_step = 0.01
-        self._long_forager_score_weights_volume_0 = 0.0
-        self._long_forager_score_weights_volume_1 = 1.0
-        self._long_forager_score_weights_volume_step = 0.01
-        self._long_hsl_cooldown_minutes_after_red_0 = 1.0
-        self._long_hsl_cooldown_minutes_after_red_1 = 2880.0
-        self._long_hsl_cooldown_minutes_after_red_step = 10.0
-        self._long_hsl_ema_span_minutes_0 = 1.0
-        self._long_hsl_ema_span_minutes_1 = 2880.0
-        self._long_hsl_ema_span_minutes_step = 10.0
-        self._long_hsl_red_threshold_0 = 0.01
-        self._long_hsl_red_threshold_1 = 0.12
-        self._long_hsl_red_threshold_step = 0.001
         self._long_n_positions_0 = 1.0
         self._long_n_positions_1 = 20.0
         self._long_n_positions_step = 0.0
@@ -4337,24 +4221,6 @@ class Bounds:
         self._short_filter_volume_ema_span_0 = 10.0
         self._short_filter_volume_ema_span_1 = 360.0
         self._short_filter_volume_ema_span_step = 0.0
-        self._short_forager_score_weights_ema_readiness_0 = 0.0
-        self._short_forager_score_weights_ema_readiness_1 = 1.0
-        self._short_forager_score_weights_ema_readiness_step = 0.01
-        self._short_forager_score_weights_volatility_0 = 0.0
-        self._short_forager_score_weights_volatility_1 = 1.0
-        self._short_forager_score_weights_volatility_step = 0.01
-        self._short_forager_score_weights_volume_0 = 0.0
-        self._short_forager_score_weights_volume_1 = 1.0
-        self._short_forager_score_weights_volume_step = 0.01
-        self._short_hsl_cooldown_minutes_after_red_0 = 1.0
-        self._short_hsl_cooldown_minutes_after_red_1 = 2880.0
-        self._short_hsl_cooldown_minutes_after_red_step = 10.0
-        self._short_hsl_ema_span_minutes_0 = 1.0
-        self._short_hsl_ema_span_minutes_1 = 2880.0
-        self._short_hsl_ema_span_minutes_step = 10.0
-        self._short_hsl_red_threshold_0 = 0.01
-        self._short_hsl_red_threshold_1 = 0.12
-        self._short_hsl_red_threshold_step = 0.001
         self._short_n_positions_0 = 1.0
         self._short_n_positions_1 = 20.0
         self._short_n_positions_step = 0.0
@@ -4413,15 +4279,6 @@ class Bounds:
                 "long_filter_volume_drop_pct": [self._long_filter_volume_drop_pct_0, self._long_filter_volume_drop_pct_1, self._long_filter_volume_drop_pct_step],
                 "long_filter_volatility_drop_pct": [self._long_filter_volatility_drop_pct_0, self._long_filter_volatility_drop_pct_1, self._long_filter_volatility_drop_pct_step],
                 "long_filter_volume_ema_span": [self._long_filter_volume_ema_span_0, self._long_filter_volume_ema_span_1, self._long_filter_volume_ema_span_step],
-                "long_forager_score_weights_ema_readiness": [self._long_forager_score_weights_ema_readiness_0, self._long_forager_score_weights_ema_readiness_1, self._long_forager_score_weights_ema_readiness_step],
-                "long_forager_score_weights_volatility": [self._long_forager_score_weights_volatility_0, self._long_forager_score_weights_volatility_1, self._long_forager_score_weights_volatility_step],
-                "long_forager_score_weights_volume": [self._long_forager_score_weights_volume_0, self._long_forager_score_weights_volume_1, self._long_forager_score_weights_volume_step],
-                "long_forager_volatility_ema_span": [self._long_filter_volatility_ema_span_0, self._long_filter_volatility_ema_span_1, self._long_filter_volatility_ema_span_step],
-                "long_forager_volume_drop_pct": [self._long_filter_volume_drop_pct_0, self._long_filter_volume_drop_pct_1, self._long_filter_volume_drop_pct_step],
-                "long_forager_volume_ema_span": [self._long_filter_volume_ema_span_0, self._long_filter_volume_ema_span_1, self._long_filter_volume_ema_span_step],
-                "long_hsl_cooldown_minutes_after_red": [self._long_hsl_cooldown_minutes_after_red_0, self._long_hsl_cooldown_minutes_after_red_1, self._long_hsl_cooldown_minutes_after_red_step],
-                "long_hsl_ema_span_minutes": [self._long_hsl_ema_span_minutes_0, self._long_hsl_ema_span_minutes_1, self._long_hsl_ema_span_minutes_step],
-                "long_hsl_red_threshold": [self._long_hsl_red_threshold_0, self._long_hsl_red_threshold_1, self._long_hsl_red_threshold_step],
                 "long_n_positions": [self._long_n_positions_0, self._long_n_positions_1, self._long_n_positions_step],
                 "long_total_wallet_exposure_limit": [self._long_total_wallet_exposure_limit_0, self._long_total_wallet_exposure_limit_1, self._long_total_wallet_exposure_limit_step],
                 "long_unstuck_close_pct": [self._long_unstuck_close_pct_0, self._long_unstuck_close_pct_1, self._long_unstuck_close_pct_step],
@@ -4461,15 +4318,6 @@ class Bounds:
                 "short_filter_volume_drop_pct": [self._short_filter_volume_drop_pct_0, self._short_filter_volume_drop_pct_1, self._short_filter_volume_drop_pct_step],
                 "short_filter_volatility_drop_pct": [self._short_filter_volatility_drop_pct_0, self._short_filter_volatility_drop_pct_1, self._short_filter_volatility_drop_pct_step],
                 "short_filter_volume_ema_span": [self._short_filter_volume_ema_span_0, self._short_filter_volume_ema_span_1, self._short_filter_volume_ema_span_step],
-                "short_forager_score_weights_ema_readiness": [self._short_forager_score_weights_ema_readiness_0, self._short_forager_score_weights_ema_readiness_1, self._short_forager_score_weights_ema_readiness_step],
-                "short_forager_score_weights_volatility": [self._short_forager_score_weights_volatility_0, self._short_forager_score_weights_volatility_1, self._short_forager_score_weights_volatility_step],
-                "short_forager_score_weights_volume": [self._short_forager_score_weights_volume_0, self._short_forager_score_weights_volume_1, self._short_forager_score_weights_volume_step],
-                "short_forager_volatility_ema_span": [self._short_filter_volatility_ema_span_0, self._short_filter_volatility_ema_span_1, self._short_filter_volatility_ema_span_step],
-                "short_forager_volume_drop_pct": [self._short_filter_volume_drop_pct_0, self._short_filter_volume_drop_pct_1, self._short_filter_volume_drop_pct_step],
-                "short_forager_volume_ema_span": [self._short_filter_volume_ema_span_0, self._short_filter_volume_ema_span_1, self._short_filter_volume_ema_span_step],
-                "short_hsl_cooldown_minutes_after_red": [self._short_hsl_cooldown_minutes_after_red_0, self._short_hsl_cooldown_minutes_after_red_1, self._short_hsl_cooldown_minutes_after_red_step],
-                "short_hsl_ema_span_minutes": [self._short_hsl_ema_span_minutes_0, self._short_hsl_ema_span_minutes_1, self._short_hsl_ema_span_minutes_step],
-                "short_hsl_red_threshold": [self._short_hsl_red_threshold_0, self._short_hsl_red_threshold_1, self._short_hsl_red_threshold_step],
                 "short_n_positions": [self._short_n_positions_0, self._short_n_positions_1, self._short_n_positions_step],
                 "short_total_wallet_exposure_limit": [self._short_total_wallet_exposure_limit_0, self._short_total_wallet_exposure_limit_1, self._short_total_wallet_exposure_limit_step],
                 "short_unstuck_close_pct": [self._short_unstuck_close_pct_0, self._short_unstuck_close_pct_1, self._short_unstuck_close_pct_step],
@@ -4497,19 +4345,7 @@ class Bounds:
         """
 
         exported = {}
-        legacy_export_skip = {
-            "long_filter_volatility_ema_span",
-            "long_filter_volume_drop_pct",
-            "long_filter_volatility_drop_pct",
-            "long_filter_volume_ema_span",
-            "short_filter_volatility_ema_span",
-            "short_filter_volume_drop_pct",
-            "short_filter_volatility_drop_pct",
-            "short_filter_volume_ema_span",
-        }
         for key, val in self._bounds.items():
-            if key in legacy_export_skip:
-                continue
             if isinstance(val, (list, tuple)) and len(val) >= 2:
                 lo, hi = val[0], val[1]
                 if len(val) >= 3:
@@ -4725,9 +4561,6 @@ class Bounds:
                 self.long_filter_volatility_ema_span_step = new_bounds["long_filter_volatility_ema_span"][2]
             else:
                 self.long_filter_volatility_ema_span_step = 0.0
-            self.long_forager_volatility_ema_span_0 = self.long_filter_volatility_ema_span_0
-            self.long_forager_volatility_ema_span_1 = self.long_filter_volatility_ema_span_1
-            self.long_forager_volatility_ema_span_step = self.long_filter_volatility_ema_span_step
         # Fix for old configs
         elif "long_filter_log_range_ema_span" in new_bounds:
             self.long_filter_volatility_ema_span_0 = new_bounds["long_filter_log_range_ema_span"][0]
@@ -4746,45 +4579,6 @@ class Bounds:
                 self.long_filter_volume_drop_pct_step = new_bounds["long_filter_volume_drop_pct"][2]
             else:
                 self.long_filter_volume_drop_pct_step = 0.0
-            self.long_forager_volume_drop_pct_0 = self.long_filter_volume_drop_pct_0
-            self.long_forager_volume_drop_pct_1 = self.long_filter_volume_drop_pct_1
-            self.long_forager_volume_drop_pct_step = self.long_filter_volume_drop_pct_step
-        if "long_forager_score_weights_ema_readiness" in new_bounds:
-            self.long_forager_score_weights_ema_readiness_0 = new_bounds["long_forager_score_weights_ema_readiness"][0]
-            self.long_forager_score_weights_ema_readiness_1 = new_bounds["long_forager_score_weights_ema_readiness"][1]
-            self.long_forager_score_weights_ema_readiness_step = new_bounds["long_forager_score_weights_ema_readiness"][2] if len(new_bounds["long_forager_score_weights_ema_readiness"]) >= 3 else 0.0
-        if "long_forager_score_weights_volatility" in new_bounds:
-            self.long_forager_score_weights_volatility_0 = new_bounds["long_forager_score_weights_volatility"][0]
-            self.long_forager_score_weights_volatility_1 = new_bounds["long_forager_score_weights_volatility"][1]
-            self.long_forager_score_weights_volatility_step = new_bounds["long_forager_score_weights_volatility"][2] if len(new_bounds["long_forager_score_weights_volatility"]) >= 3 else 0.0
-        if "long_forager_score_weights_volume" in new_bounds:
-            self.long_forager_score_weights_volume_0 = new_bounds["long_forager_score_weights_volume"][0]
-            self.long_forager_score_weights_volume_1 = new_bounds["long_forager_score_weights_volume"][1]
-            self.long_forager_score_weights_volume_step = new_bounds["long_forager_score_weights_volume"][2] if len(new_bounds["long_forager_score_weights_volume"]) >= 3 else 0.0
-        if "long_forager_volatility_ema_span" in new_bounds:
-            self.long_forager_volatility_ema_span_0 = new_bounds["long_forager_volatility_ema_span"][0]
-            self.long_forager_volatility_ema_span_1 = new_bounds["long_forager_volatility_ema_span"][1]
-            self.long_forager_volatility_ema_span_step = new_bounds["long_forager_volatility_ema_span"][2] if len(new_bounds["long_forager_volatility_ema_span"]) >= 3 else 0.0
-        if "long_forager_volume_drop_pct" in new_bounds:
-            self.long_forager_volume_drop_pct_0 = new_bounds["long_forager_volume_drop_pct"][0]
-            self.long_forager_volume_drop_pct_1 = new_bounds["long_forager_volume_drop_pct"][1]
-            self.long_forager_volume_drop_pct_step = new_bounds["long_forager_volume_drop_pct"][2] if len(new_bounds["long_forager_volume_drop_pct"]) >= 3 else 0.0
-        if "long_forager_volume_ema_span" in new_bounds:
-            self.long_forager_volume_ema_span_0 = new_bounds["long_forager_volume_ema_span"][0]
-            self.long_forager_volume_ema_span_1 = new_bounds["long_forager_volume_ema_span"][1]
-            self.long_forager_volume_ema_span_step = new_bounds["long_forager_volume_ema_span"][2] if len(new_bounds["long_forager_volume_ema_span"]) >= 3 else 0.0
-        if "long_hsl_cooldown_minutes_after_red" in new_bounds:
-            self.long_hsl_cooldown_minutes_after_red_0 = new_bounds["long_hsl_cooldown_minutes_after_red"][0]
-            self.long_hsl_cooldown_minutes_after_red_1 = new_bounds["long_hsl_cooldown_minutes_after_red"][1]
-            self.long_hsl_cooldown_minutes_after_red_step = new_bounds["long_hsl_cooldown_minutes_after_red"][2] if len(new_bounds["long_hsl_cooldown_minutes_after_red"]) >= 3 else 0.0
-        if "long_hsl_ema_span_minutes" in new_bounds:
-            self.long_hsl_ema_span_minutes_0 = new_bounds["long_hsl_ema_span_minutes"][0]
-            self.long_hsl_ema_span_minutes_1 = new_bounds["long_hsl_ema_span_minutes"][1]
-            self.long_hsl_ema_span_minutes_step = new_bounds["long_hsl_ema_span_minutes"][2] if len(new_bounds["long_hsl_ema_span_minutes"]) >= 3 else 0.0
-        if "long_hsl_red_threshold" in new_bounds:
-            self.long_hsl_red_threshold_0 = new_bounds["long_hsl_red_threshold"][0]
-            self.long_hsl_red_threshold_1 = new_bounds["long_hsl_red_threshold"][1]
-            self.long_hsl_red_threshold_step = new_bounds["long_hsl_red_threshold"][2] if len(new_bounds["long_hsl_red_threshold"]) >= 3 else 0.0
         # Fix for old configs
         elif "long_filter_relative_volume_clip_pct" in new_bounds:
             self.long_filter_volume_drop_pct_0 = new_bounds["long_filter_relative_volume_clip_pct"][0]
@@ -4803,9 +4597,6 @@ class Bounds:
                 self.long_filter_volume_ema_span_step = new_bounds["long_filter_volume_ema_span"][2]
             else:
                 self.long_filter_volume_ema_span_step = 0.0
-            self.long_forager_volume_ema_span_0 = self.long_filter_volume_ema_span_0
-            self.long_forager_volume_ema_span_1 = self.long_filter_volume_ema_span_1
-            self.long_forager_volume_ema_span_step = self.long_filter_volume_ema_span_step
         # Fix for old configs
         elif "long_filter_rolling_window" in new_bounds:
             self.long_filter_volume_ema_span_0 = new_bounds["long_filter_rolling_window"][0]
@@ -5043,9 +4834,6 @@ class Bounds:
                 self.short_filter_volatility_ema_span_step = new_bounds["short_filter_volatility_ema_span"][2]
             else:
                 self.short_filter_volatility_ema_span_step = 0.0
-            self.short_forager_volatility_ema_span_0 = self.short_filter_volatility_ema_span_0
-            self.short_forager_volatility_ema_span_1 = self.short_filter_volatility_ema_span_1
-            self.short_forager_volatility_ema_span_step = self.short_filter_volatility_ema_span_step
         # Fix for old configs
         elif "short_filter_log_range_ema_span" in new_bounds:
             self.short_filter_volatility_ema_span_0 = new_bounds["short_filter_log_range_ema_span"][0]
@@ -5063,45 +4851,6 @@ class Bounds:
                 self.short_filter_volume_drop_pct_step = new_bounds["short_filter_volume_drop_pct"][2]
             else:
                 self.short_filter_volume_drop_pct_step = 0.0
-            self.short_forager_volume_drop_pct_0 = self.short_filter_volume_drop_pct_0
-            self.short_forager_volume_drop_pct_1 = self.short_filter_volume_drop_pct_1
-            self.short_forager_volume_drop_pct_step = self.short_filter_volume_drop_pct_step
-        if "short_forager_score_weights_ema_readiness" in new_bounds:
-            self.short_forager_score_weights_ema_readiness_0 = new_bounds["short_forager_score_weights_ema_readiness"][0]
-            self.short_forager_score_weights_ema_readiness_1 = new_bounds["short_forager_score_weights_ema_readiness"][1]
-            self.short_forager_score_weights_ema_readiness_step = new_bounds["short_forager_score_weights_ema_readiness"][2] if len(new_bounds["short_forager_score_weights_ema_readiness"]) >= 3 else 0.0
-        if "short_forager_score_weights_volatility" in new_bounds:
-            self.short_forager_score_weights_volatility_0 = new_bounds["short_forager_score_weights_volatility"][0]
-            self.short_forager_score_weights_volatility_1 = new_bounds["short_forager_score_weights_volatility"][1]
-            self.short_forager_score_weights_volatility_step = new_bounds["short_forager_score_weights_volatility"][2] if len(new_bounds["short_forager_score_weights_volatility"]) >= 3 else 0.0
-        if "short_forager_score_weights_volume" in new_bounds:
-            self.short_forager_score_weights_volume_0 = new_bounds["short_forager_score_weights_volume"][0]
-            self.short_forager_score_weights_volume_1 = new_bounds["short_forager_score_weights_volume"][1]
-            self.short_forager_score_weights_volume_step = new_bounds["short_forager_score_weights_volume"][2] if len(new_bounds["short_forager_score_weights_volume"]) >= 3 else 0.0
-        if "short_forager_volatility_ema_span" in new_bounds:
-            self.short_forager_volatility_ema_span_0 = new_bounds["short_forager_volatility_ema_span"][0]
-            self.short_forager_volatility_ema_span_1 = new_bounds["short_forager_volatility_ema_span"][1]
-            self.short_forager_volatility_ema_span_step = new_bounds["short_forager_volatility_ema_span"][2] if len(new_bounds["short_forager_volatility_ema_span"]) >= 3 else 0.0
-        if "short_forager_volume_drop_pct" in new_bounds:
-            self.short_forager_volume_drop_pct_0 = new_bounds["short_forager_volume_drop_pct"][0]
-            self.short_forager_volume_drop_pct_1 = new_bounds["short_forager_volume_drop_pct"][1]
-            self.short_forager_volume_drop_pct_step = new_bounds["short_forager_volume_drop_pct"][2] if len(new_bounds["short_forager_volume_drop_pct"]) >= 3 else 0.0
-        if "short_forager_volume_ema_span" in new_bounds:
-            self.short_forager_volume_ema_span_0 = new_bounds["short_forager_volume_ema_span"][0]
-            self.short_forager_volume_ema_span_1 = new_bounds["short_forager_volume_ema_span"][1]
-            self.short_forager_volume_ema_span_step = new_bounds["short_forager_volume_ema_span"][2] if len(new_bounds["short_forager_volume_ema_span"]) >= 3 else 0.0
-        if "short_hsl_cooldown_minutes_after_red" in new_bounds:
-            self.short_hsl_cooldown_minutes_after_red_0 = new_bounds["short_hsl_cooldown_minutes_after_red"][0]
-            self.short_hsl_cooldown_minutes_after_red_1 = new_bounds["short_hsl_cooldown_minutes_after_red"][1]
-            self.short_hsl_cooldown_minutes_after_red_step = new_bounds["short_hsl_cooldown_minutes_after_red"][2] if len(new_bounds["short_hsl_cooldown_minutes_after_red"]) >= 3 else 0.0
-        if "short_hsl_ema_span_minutes" in new_bounds:
-            self.short_hsl_ema_span_minutes_0 = new_bounds["short_hsl_ema_span_minutes"][0]
-            self.short_hsl_ema_span_minutes_1 = new_bounds["short_hsl_ema_span_minutes"][1]
-            self.short_hsl_ema_span_minutes_step = new_bounds["short_hsl_ema_span_minutes"][2] if len(new_bounds["short_hsl_ema_span_minutes"]) >= 3 else 0.0
-        if "short_hsl_red_threshold" in new_bounds:
-            self.short_hsl_red_threshold_0 = new_bounds["short_hsl_red_threshold"][0]
-            self.short_hsl_red_threshold_1 = new_bounds["short_hsl_red_threshold"][1]
-            self.short_hsl_red_threshold_step = new_bounds["short_hsl_red_threshold"][2] if len(new_bounds["short_hsl_red_threshold"]) >= 3 else 0.0
         # Fix for old configs
         elif "short_filter_relative_volume_clip_pct" in new_bounds:
             self.short_filter_volume_drop_pct_0 = new_bounds["short_filter_relative_volume_clip_pct"][0]
@@ -5120,9 +4869,6 @@ class Bounds:
                 self.short_filter_volume_ema_span_step = new_bounds["short_filter_volume_ema_span"][2]
             else:
                 self.short_filter_volume_ema_span_step = 0.0
-            self.short_forager_volume_ema_span_0 = self.short_filter_volume_ema_span_0
-            self.short_forager_volume_ema_span_1 = self.short_filter_volume_ema_span_1
-            self.short_forager_volume_ema_span_step = self.short_filter_volume_ema_span_step
         # Fix for old configs
         elif "short_filter_rolling_window" in new_bounds:
             self.short_filter_volume_ema_span_0 = new_bounds["short_filter_rolling_window"][0]
@@ -5382,60 +5128,6 @@ class Bounds:
     @property
     def long_filter_volume_ema_span_step(self): return self._long_filter_volume_ema_span_step
     @property
-    def long_forager_score_weights_ema_readiness_0(self): return self._long_forager_score_weights_ema_readiness_0
-    @property
-    def long_forager_score_weights_ema_readiness_1(self): return self._long_forager_score_weights_ema_readiness_1
-    @property
-    def long_forager_score_weights_ema_readiness_step(self): return self._long_forager_score_weights_ema_readiness_step
-    @property
-    def long_forager_score_weights_volatility_0(self): return self._long_forager_score_weights_volatility_0
-    @property
-    def long_forager_score_weights_volatility_1(self): return self._long_forager_score_weights_volatility_1
-    @property
-    def long_forager_score_weights_volatility_step(self): return self._long_forager_score_weights_volatility_step
-    @property
-    def long_forager_score_weights_volume_0(self): return self._long_forager_score_weights_volume_0
-    @property
-    def long_forager_score_weights_volume_1(self): return self._long_forager_score_weights_volume_1
-    @property
-    def long_forager_score_weights_volume_step(self): return self._long_forager_score_weights_volume_step
-    @property
-    def long_forager_volatility_ema_span_0(self): return self._long_filter_volatility_ema_span_0
-    @property
-    def long_forager_volatility_ema_span_1(self): return self._long_filter_volatility_ema_span_1
-    @property
-    def long_forager_volatility_ema_span_step(self): return self._long_filter_volatility_ema_span_step
-    @property
-    def long_forager_volume_drop_pct_0(self): return self._long_filter_volume_drop_pct_0
-    @property
-    def long_forager_volume_drop_pct_1(self): return self._long_filter_volume_drop_pct_1
-    @property
-    def long_forager_volume_drop_pct_step(self): return self._long_filter_volume_drop_pct_step
-    @property
-    def long_forager_volume_ema_span_0(self): return self._long_filter_volume_ema_span_0
-    @property
-    def long_forager_volume_ema_span_1(self): return self._long_filter_volume_ema_span_1
-    @property
-    def long_forager_volume_ema_span_step(self): return self._long_filter_volume_ema_span_step
-    @property
-    def long_hsl_cooldown_minutes_after_red_0(self): return self._long_hsl_cooldown_minutes_after_red_0
-    @property
-    def long_hsl_cooldown_minutes_after_red_1(self): return self._long_hsl_cooldown_minutes_after_red_1
-    @property
-    def long_hsl_cooldown_minutes_after_red_step(self): return self._long_hsl_cooldown_minutes_after_red_step
-    @property
-    def long_hsl_ema_span_minutes_0(self): return self._long_hsl_ema_span_minutes_0
-    @property
-    def long_hsl_ema_span_minutes_1(self): return self._long_hsl_ema_span_minutes_1
-    @property
-    def long_hsl_ema_span_minutes_step(self): return self._long_hsl_ema_span_minutes_step
-    @property
-    def long_hsl_red_threshold_0(self): return self._long_hsl_red_threshold_0
-    @property
-    def long_hsl_red_threshold_1(self): return self._long_hsl_red_threshold_1
-    @property
-    def long_hsl_red_threshold_step(self): return self._long_hsl_red_threshold_step
-    @property
     def long_n_positions_0(self): return self._long_n_positions_0
     @property
     def long_n_positions_1(self): return self._long_n_positions_1
@@ -5659,60 +5351,6 @@ class Bounds:
     def short_filter_volume_ema_span_1(self): return self._short_filter_volume_ema_span_1
     @property
     def short_filter_volume_ema_span_step(self): return self._short_filter_volume_ema_span_step
-    @property
-    def short_forager_score_weights_ema_readiness_0(self): return self._short_forager_score_weights_ema_readiness_0
-    @property
-    def short_forager_score_weights_ema_readiness_1(self): return self._short_forager_score_weights_ema_readiness_1
-    @property
-    def short_forager_score_weights_ema_readiness_step(self): return self._short_forager_score_weights_ema_readiness_step
-    @property
-    def short_forager_score_weights_volatility_0(self): return self._short_forager_score_weights_volatility_0
-    @property
-    def short_forager_score_weights_volatility_1(self): return self._short_forager_score_weights_volatility_1
-    @property
-    def short_forager_score_weights_volatility_step(self): return self._short_forager_score_weights_volatility_step
-    @property
-    def short_forager_score_weights_volume_0(self): return self._short_forager_score_weights_volume_0
-    @property
-    def short_forager_score_weights_volume_1(self): return self._short_forager_score_weights_volume_1
-    @property
-    def short_forager_score_weights_volume_step(self): return self._short_forager_score_weights_volume_step
-    @property
-    def short_forager_volatility_ema_span_0(self): return self._short_filter_volatility_ema_span_0
-    @property
-    def short_forager_volatility_ema_span_1(self): return self._short_filter_volatility_ema_span_1
-    @property
-    def short_forager_volatility_ema_span_step(self): return self._short_filter_volatility_ema_span_step
-    @property
-    def short_forager_volume_drop_pct_0(self): return self._short_filter_volume_drop_pct_0
-    @property
-    def short_forager_volume_drop_pct_1(self): return self._short_filter_volume_drop_pct_1
-    @property
-    def short_forager_volume_drop_pct_step(self): return self._short_filter_volume_drop_pct_step
-    @property
-    def short_forager_volume_ema_span_0(self): return self._short_filter_volume_ema_span_0
-    @property
-    def short_forager_volume_ema_span_1(self): return self._short_filter_volume_ema_span_1
-    @property
-    def short_forager_volume_ema_span_step(self): return self._short_filter_volume_ema_span_step
-    @property
-    def short_hsl_cooldown_minutes_after_red_0(self): return self._short_hsl_cooldown_minutes_after_red_0
-    @property
-    def short_hsl_cooldown_minutes_after_red_1(self): return self._short_hsl_cooldown_minutes_after_red_1
-    @property
-    def short_hsl_cooldown_minutes_after_red_step(self): return self._short_hsl_cooldown_minutes_after_red_step
-    @property
-    def short_hsl_ema_span_minutes_0(self): return self._short_hsl_ema_span_minutes_0
-    @property
-    def short_hsl_ema_span_minutes_1(self): return self._short_hsl_ema_span_minutes_1
-    @property
-    def short_hsl_ema_span_minutes_step(self): return self._short_hsl_ema_span_minutes_step
-    @property
-    def short_hsl_red_threshold_0(self): return self._short_hsl_red_threshold_0
-    @property
-    def short_hsl_red_threshold_1(self): return self._short_hsl_red_threshold_1
-    @property
-    def short_hsl_red_threshold_step(self): return self._short_hsl_red_threshold_step
     @property
     def short_n_positions_0(self): return self._short_n_positions_0
     @property
@@ -6189,145 +5827,6 @@ class Bounds:
             self._bounds["long_filter_volume_ema_span"].append(new_value)
         else:
             self._bounds["long_filter_volume_ema_span"][2] = new_value
-        if len(self._bounds["long_forager_volume_ema_span"]) < 3:
-            self._bounds["long_forager_volume_ema_span"].append(new_value)
-        else:
-            self._bounds["long_forager_volume_ema_span"][2] = new_value
-    @long_forager_score_weights_ema_readiness_0.setter
-    def long_forager_score_weights_ema_readiness_0(self, new_value):
-        self._long_forager_score_weights_ema_readiness_0 = new_value
-        self._bounds["long_forager_score_weights_ema_readiness"][0] = new_value
-    @long_forager_score_weights_ema_readiness_1.setter
-    def long_forager_score_weights_ema_readiness_1(self, new_value):
-        self._long_forager_score_weights_ema_readiness_1 = new_value
-        self._bounds["long_forager_score_weights_ema_readiness"][1] = new_value
-    @long_forager_score_weights_ema_readiness_step.setter
-    def long_forager_score_weights_ema_readiness_step(self, new_value):
-        self._long_forager_score_weights_ema_readiness_step = new_value
-        if len(self._bounds["long_forager_score_weights_ema_readiness"]) < 3:
-            self._bounds["long_forager_score_weights_ema_readiness"].append(new_value)
-        else:
-            self._bounds["long_forager_score_weights_ema_readiness"][2] = new_value
-    @long_forager_score_weights_volatility_0.setter
-    def long_forager_score_weights_volatility_0(self, new_value):
-        self._long_forager_score_weights_volatility_0 = new_value
-        self._bounds["long_forager_score_weights_volatility"][0] = new_value
-    @long_forager_score_weights_volatility_1.setter
-    def long_forager_score_weights_volatility_1(self, new_value):
-        self._long_forager_score_weights_volatility_1 = new_value
-        self._bounds["long_forager_score_weights_volatility"][1] = new_value
-    @long_forager_score_weights_volatility_step.setter
-    def long_forager_score_weights_volatility_step(self, new_value):
-        self._long_forager_score_weights_volatility_step = new_value
-        if len(self._bounds["long_forager_score_weights_volatility"]) < 3:
-            self._bounds["long_forager_score_weights_volatility"].append(new_value)
-        else:
-            self._bounds["long_forager_score_weights_volatility"][2] = new_value
-    @long_forager_score_weights_volume_0.setter
-    def long_forager_score_weights_volume_0(self, new_value):
-        self._long_forager_score_weights_volume_0 = new_value
-        self._bounds["long_forager_score_weights_volume"][0] = new_value
-    @long_forager_score_weights_volume_1.setter
-    def long_forager_score_weights_volume_1(self, new_value):
-        self._long_forager_score_weights_volume_1 = new_value
-        self._bounds["long_forager_score_weights_volume"][1] = new_value
-    @long_forager_score_weights_volume_step.setter
-    def long_forager_score_weights_volume_step(self, new_value):
-        self._long_forager_score_weights_volume_step = new_value
-        if len(self._bounds["long_forager_score_weights_volume"]) < 3:
-            self._bounds["long_forager_score_weights_volume"].append(new_value)
-        else:
-            self._bounds["long_forager_score_weights_volume"][2] = new_value
-    @long_forager_volatility_ema_span_0.setter
-    def long_forager_volatility_ema_span_0(self, new_value):
-        self.long_filter_volatility_ema_span_0 = new_value
-        self._bounds["long_forager_volatility_ema_span"][0] = new_value
-    @long_forager_volatility_ema_span_1.setter
-    def long_forager_volatility_ema_span_1(self, new_value):
-        self.long_filter_volatility_ema_span_1 = new_value
-        self._bounds["long_forager_volatility_ema_span"][1] = new_value
-    @long_forager_volatility_ema_span_step.setter
-    def long_forager_volatility_ema_span_step(self, new_value):
-        self.long_filter_volatility_ema_span_step = new_value
-        if len(self._bounds["long_forager_volatility_ema_span"]) < 3:
-            self._bounds["long_forager_volatility_ema_span"].append(new_value)
-        else:
-            self._bounds["long_forager_volatility_ema_span"][2] = new_value
-    @long_forager_volume_drop_pct_0.setter
-    def long_forager_volume_drop_pct_0(self, new_value):
-        self.long_filter_volume_drop_pct_0 = new_value
-        self._bounds["long_forager_volume_drop_pct"][0] = new_value
-    @long_forager_volume_drop_pct_1.setter
-    def long_forager_volume_drop_pct_1(self, new_value):
-        self.long_filter_volume_drop_pct_1 = new_value
-        self._bounds["long_forager_volume_drop_pct"][1] = new_value
-    @long_forager_volume_drop_pct_step.setter
-    def long_forager_volume_drop_pct_step(self, new_value):
-        self.long_filter_volume_drop_pct_step = new_value
-        if len(self._bounds["long_forager_volume_drop_pct"]) < 3:
-            self._bounds["long_forager_volume_drop_pct"].append(new_value)
-        else:
-            self._bounds["long_forager_volume_drop_pct"][2] = new_value
-    @long_forager_volume_ema_span_0.setter
-    def long_forager_volume_ema_span_0(self, new_value):
-        self.long_filter_volume_ema_span_0 = new_value
-        self._bounds["long_forager_volume_ema_span"][0] = new_value
-    @long_forager_volume_ema_span_1.setter
-    def long_forager_volume_ema_span_1(self, new_value):
-        self.long_filter_volume_ema_span_1 = new_value
-        self._bounds["long_forager_volume_ema_span"][1] = new_value
-    @long_forager_volume_ema_span_step.setter
-    def long_forager_volume_ema_span_step(self, new_value):
-        self.long_filter_volume_ema_span_step = new_value
-        if len(self._bounds["long_forager_volume_ema_span"]) < 3:
-            self._bounds["long_forager_volume_ema_span"].append(new_value)
-        else:
-            self._bounds["long_forager_volume_ema_span"][2] = new_value
-    @long_hsl_cooldown_minutes_after_red_0.setter
-    def long_hsl_cooldown_minutes_after_red_0(self, new_value):
-        self._long_hsl_cooldown_minutes_after_red_0 = new_value
-        self._bounds["long_hsl_cooldown_minutes_after_red"][0] = new_value
-    @long_hsl_cooldown_minutes_after_red_1.setter
-    def long_hsl_cooldown_minutes_after_red_1(self, new_value):
-        self._long_hsl_cooldown_minutes_after_red_1 = new_value
-        self._bounds["long_hsl_cooldown_minutes_after_red"][1] = new_value
-    @long_hsl_cooldown_minutes_after_red_step.setter
-    def long_hsl_cooldown_minutes_after_red_step(self, new_value):
-        self._long_hsl_cooldown_minutes_after_red_step = new_value
-        if len(self._bounds["long_hsl_cooldown_minutes_after_red"]) < 3:
-            self._bounds["long_hsl_cooldown_minutes_after_red"].append(new_value)
-        else:
-            self._bounds["long_hsl_cooldown_minutes_after_red"][2] = new_value
-    @long_hsl_ema_span_minutes_0.setter
-    def long_hsl_ema_span_minutes_0(self, new_value):
-        self._long_hsl_ema_span_minutes_0 = new_value
-        self._bounds["long_hsl_ema_span_minutes"][0] = new_value
-    @long_hsl_ema_span_minutes_1.setter
-    def long_hsl_ema_span_minutes_1(self, new_value):
-        self._long_hsl_ema_span_minutes_1 = new_value
-        self._bounds["long_hsl_ema_span_minutes"][1] = new_value
-    @long_hsl_ema_span_minutes_step.setter
-    def long_hsl_ema_span_minutes_step(self, new_value):
-        self._long_hsl_ema_span_minutes_step = new_value
-        if len(self._bounds["long_hsl_ema_span_minutes"]) < 3:
-            self._bounds["long_hsl_ema_span_minutes"].append(new_value)
-        else:
-            self._bounds["long_hsl_ema_span_minutes"][2] = new_value
-    @long_hsl_red_threshold_0.setter
-    def long_hsl_red_threshold_0(self, new_value):
-        self._long_hsl_red_threshold_0 = new_value
-        self._bounds["long_hsl_red_threshold"][0] = new_value
-    @long_hsl_red_threshold_1.setter
-    def long_hsl_red_threshold_1(self, new_value):
-        self._long_hsl_red_threshold_1 = new_value
-        self._bounds["long_hsl_red_threshold"][1] = new_value
-    @long_hsl_red_threshold_step.setter
-    def long_hsl_red_threshold_step(self, new_value):
-        self._long_hsl_red_threshold_step = new_value
-        if len(self._bounds["long_hsl_red_threshold"]) < 3:
-            self._bounds["long_hsl_red_threshold"].append(new_value)
-        else:
-            self._bounds["long_hsl_red_threshold"][2] = new_value
     @long_n_positions_0.setter
     def long_n_positions_0(self, new_value):
         self._long_n_positions_0 = new_value
@@ -6885,145 +6384,6 @@ class Bounds:
             self._bounds["short_filter_volume_ema_span"].append(new_value)
         else:
             self._bounds["short_filter_volume_ema_span"][2] = new_value
-        if len(self._bounds["short_forager_volume_ema_span"]) < 3:
-            self._bounds["short_forager_volume_ema_span"].append(new_value)
-        else:
-            self._bounds["short_forager_volume_ema_span"][2] = new_value
-    @short_forager_score_weights_ema_readiness_0.setter
-    def short_forager_score_weights_ema_readiness_0(self, new_value):
-        self._short_forager_score_weights_ema_readiness_0 = new_value
-        self._bounds["short_forager_score_weights_ema_readiness"][0] = new_value
-    @short_forager_score_weights_ema_readiness_1.setter
-    def short_forager_score_weights_ema_readiness_1(self, new_value):
-        self._short_forager_score_weights_ema_readiness_1 = new_value
-        self._bounds["short_forager_score_weights_ema_readiness"][1] = new_value
-    @short_forager_score_weights_ema_readiness_step.setter
-    def short_forager_score_weights_ema_readiness_step(self, new_value):
-        self._short_forager_score_weights_ema_readiness_step = new_value
-        if len(self._bounds["short_forager_score_weights_ema_readiness"]) < 3:
-            self._bounds["short_forager_score_weights_ema_readiness"].append(new_value)
-        else:
-            self._bounds["short_forager_score_weights_ema_readiness"][2] = new_value
-    @short_forager_score_weights_volatility_0.setter
-    def short_forager_score_weights_volatility_0(self, new_value):
-        self._short_forager_score_weights_volatility_0 = new_value
-        self._bounds["short_forager_score_weights_volatility"][0] = new_value
-    @short_forager_score_weights_volatility_1.setter
-    def short_forager_score_weights_volatility_1(self, new_value):
-        self._short_forager_score_weights_volatility_1 = new_value
-        self._bounds["short_forager_score_weights_volatility"][1] = new_value
-    @short_forager_score_weights_volatility_step.setter
-    def short_forager_score_weights_volatility_step(self, new_value):
-        self._short_forager_score_weights_volatility_step = new_value
-        if len(self._bounds["short_forager_score_weights_volatility"]) < 3:
-            self._bounds["short_forager_score_weights_volatility"].append(new_value)
-        else:
-            self._bounds["short_forager_score_weights_volatility"][2] = new_value
-    @short_forager_score_weights_volume_0.setter
-    def short_forager_score_weights_volume_0(self, new_value):
-        self._short_forager_score_weights_volume_0 = new_value
-        self._bounds["short_forager_score_weights_volume"][0] = new_value
-    @short_forager_score_weights_volume_1.setter
-    def short_forager_score_weights_volume_1(self, new_value):
-        self._short_forager_score_weights_volume_1 = new_value
-        self._bounds["short_forager_score_weights_volume"][1] = new_value
-    @short_forager_score_weights_volume_step.setter
-    def short_forager_score_weights_volume_step(self, new_value):
-        self._short_forager_score_weights_volume_step = new_value
-        if len(self._bounds["short_forager_score_weights_volume"]) < 3:
-            self._bounds["short_forager_score_weights_volume"].append(new_value)
-        else:
-            self._bounds["short_forager_score_weights_volume"][2] = new_value
-    @short_forager_volatility_ema_span_0.setter
-    def short_forager_volatility_ema_span_0(self, new_value):
-        self.short_filter_volatility_ema_span_0 = new_value
-        self._bounds["short_forager_volatility_ema_span"][0] = new_value
-    @short_forager_volatility_ema_span_1.setter
-    def short_forager_volatility_ema_span_1(self, new_value):
-        self.short_filter_volatility_ema_span_1 = new_value
-        self._bounds["short_forager_volatility_ema_span"][1] = new_value
-    @short_forager_volatility_ema_span_step.setter
-    def short_forager_volatility_ema_span_step(self, new_value):
-        self.short_filter_volatility_ema_span_step = new_value
-        if len(self._bounds["short_forager_volatility_ema_span"]) < 3:
-            self._bounds["short_forager_volatility_ema_span"].append(new_value)
-        else:
-            self._bounds["short_forager_volatility_ema_span"][2] = new_value
-    @short_forager_volume_drop_pct_0.setter
-    def short_forager_volume_drop_pct_0(self, new_value):
-        self.short_filter_volume_drop_pct_0 = new_value
-        self._bounds["short_forager_volume_drop_pct"][0] = new_value
-    @short_forager_volume_drop_pct_1.setter
-    def short_forager_volume_drop_pct_1(self, new_value):
-        self.short_filter_volume_drop_pct_1 = new_value
-        self._bounds["short_forager_volume_drop_pct"][1] = new_value
-    @short_forager_volume_drop_pct_step.setter
-    def short_forager_volume_drop_pct_step(self, new_value):
-        self.short_filter_volume_drop_pct_step = new_value
-        if len(self._bounds["short_forager_volume_drop_pct"]) < 3:
-            self._bounds["short_forager_volume_drop_pct"].append(new_value)
-        else:
-            self._bounds["short_forager_volume_drop_pct"][2] = new_value
-    @short_forager_volume_ema_span_0.setter
-    def short_forager_volume_ema_span_0(self, new_value):
-        self.short_filter_volume_ema_span_0 = new_value
-        self._bounds["short_forager_volume_ema_span"][0] = new_value
-    @short_forager_volume_ema_span_1.setter
-    def short_forager_volume_ema_span_1(self, new_value):
-        self.short_filter_volume_ema_span_1 = new_value
-        self._bounds["short_forager_volume_ema_span"][1] = new_value
-    @short_forager_volume_ema_span_step.setter
-    def short_forager_volume_ema_span_step(self, new_value):
-        self.short_filter_volume_ema_span_step = new_value
-        if len(self._bounds["short_forager_volume_ema_span"]) < 3:
-            self._bounds["short_forager_volume_ema_span"].append(new_value)
-        else:
-            self._bounds["short_forager_volume_ema_span"][2] = new_value
-    @short_hsl_cooldown_minutes_after_red_0.setter
-    def short_hsl_cooldown_minutes_after_red_0(self, new_value):
-        self._short_hsl_cooldown_minutes_after_red_0 = new_value
-        self._bounds["short_hsl_cooldown_minutes_after_red"][0] = new_value
-    @short_hsl_cooldown_minutes_after_red_1.setter
-    def short_hsl_cooldown_minutes_after_red_1(self, new_value):
-        self._short_hsl_cooldown_minutes_after_red_1 = new_value
-        self._bounds["short_hsl_cooldown_minutes_after_red"][1] = new_value
-    @short_hsl_cooldown_minutes_after_red_step.setter
-    def short_hsl_cooldown_minutes_after_red_step(self, new_value):
-        self._short_hsl_cooldown_minutes_after_red_step = new_value
-        if len(self._bounds["short_hsl_cooldown_minutes_after_red"]) < 3:
-            self._bounds["short_hsl_cooldown_minutes_after_red"].append(new_value)
-        else:
-            self._bounds["short_hsl_cooldown_minutes_after_red"][2] = new_value
-    @short_hsl_ema_span_minutes_0.setter
-    def short_hsl_ema_span_minutes_0(self, new_value):
-        self._short_hsl_ema_span_minutes_0 = new_value
-        self._bounds["short_hsl_ema_span_minutes"][0] = new_value
-    @short_hsl_ema_span_minutes_1.setter
-    def short_hsl_ema_span_minutes_1(self, new_value):
-        self._short_hsl_ema_span_minutes_1 = new_value
-        self._bounds["short_hsl_ema_span_minutes"][1] = new_value
-    @short_hsl_ema_span_minutes_step.setter
-    def short_hsl_ema_span_minutes_step(self, new_value):
-        self._short_hsl_ema_span_minutes_step = new_value
-        if len(self._bounds["short_hsl_ema_span_minutes"]) < 3:
-            self._bounds["short_hsl_ema_span_minutes"].append(new_value)
-        else:
-            self._bounds["short_hsl_ema_span_minutes"][2] = new_value
-    @short_hsl_red_threshold_0.setter
-    def short_hsl_red_threshold_0(self, new_value):
-        self._short_hsl_red_threshold_0 = new_value
-        self._bounds["short_hsl_red_threshold"][0] = new_value
-    @short_hsl_red_threshold_1.setter
-    def short_hsl_red_threshold_1(self, new_value):
-        self._short_hsl_red_threshold_1 = new_value
-        self._bounds["short_hsl_red_threshold"][1] = new_value
-    @short_hsl_red_threshold_step.setter
-    def short_hsl_red_threshold_step(self, new_value):
-        self._short_hsl_red_threshold_step = new_value
-        if len(self._bounds["short_hsl_red_threshold"]) < 3:
-            self._bounds["short_hsl_red_threshold"].append(new_value)
-        else:
-            self._bounds["short_hsl_red_threshold"][2] = new_value
     @short_n_positions_0.setter
     def short_n_positions_0(self, new_value):
         self._short_n_positions_0 = new_value
@@ -7166,7 +6526,6 @@ class PBGui:
         self._enabled_on = "disabled"
         self._only_cpt = False
         self._starting_config = False
-        self._starting_config_path = ""
         self._market_cap = 0
         self._vol_mcap = 10.0
         self._tags = []
@@ -7178,7 +6537,6 @@ class PBGui:
             "enabled_on": self._enabled_on,
             "only_cpt": self._only_cpt,
             "starting_config": self._starting_config,
-            "starting_config_path": self._starting_config_path,
             "market_cap": self._market_cap,
             "vol_mcap": self._vol_mcap,
             "tags": self._tags,
@@ -7202,8 +6560,6 @@ class PBGui:
             self.only_cpt = new_pbgui["only_cpt"]
         if "starting_config" in new_pbgui:
             self.starting_config = new_pbgui["starting_config"]
-        if "starting_config_path" in new_pbgui:
-            self.starting_config_path = new_pbgui["starting_config_path"]
         if "market_cap" in new_pbgui:
             self.market_cap = new_pbgui["market_cap"]
         if "vol_mcap" in new_pbgui:
@@ -7225,8 +6581,6 @@ class PBGui:
     def only_cpt(self): return self._only_cpt
     @property
     def starting_config(self): return self._starting_config
-    @property
-    def starting_config_path(self): return self._starting_config_path
     @property
     def market_cap(self): return self._market_cap
     @property
@@ -7256,10 +6610,6 @@ class PBGui:
     def starting_config(self, new_starting_config):
         self._starting_config = new_starting_config
         self._pbgui["starting_config"] = self._starting_config
-    @starting_config_path.setter
-    def starting_config_path(self, new_starting_config_path):
-        self._starting_config_path = "" if new_starting_config_path is None else str(new_starting_config_path).strip()
-        self._pbgui["starting_config_path"] = self._starting_config_path
     @market_cap.setter
     def market_cap(self, new_market_cap):
         self._market_cap = new_market_cap
@@ -8456,8 +7806,88 @@ class ConfigV7():
         if self._config != None and self._config_file != None:
             file = Path(f'{self._config_file}')
             file.parent.mkdir(parents=True, exist_ok=True)
-            with open(file, "w", encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4)
+            # Backup existing config before overwriting
+            self._backup_before_save(file)
+            # Atomic write: write to temp file, then rename
+            tmp_file = file.with_suffix('.json.tmp')
+            try:
+                with open(tmp_file, "w", encoding='utf-8') as f:
+                    json.dump(self.config, f, indent=4)
+                os.replace(str(tmp_file), str(file))
+            except Exception:
+                # Clean up temp file on failure
+                if tmp_file.exists():
+                    tmp_file.unlink(missing_ok=True)
+                raise
+
+    def _backup_before_save(self, config_path: Path):
+        """Create a versioned backup of the current config before overwriting."""
+        try:
+            if not config_path.exists():
+                return
+            # Determine instance name from path (data/run_v7/{name}/config.json)
+            instance_dir = config_path.parent
+            instance_name = instance_dir.name
+            # Read current version from existing config
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    old_cfg = json.load(f)
+                old_version = old_cfg.get("pbgui", {}).get("version", 0)
+            except (json.JSONDecodeError, OSError):
+                return
+            # Determine backup root: data/backup/v7/{name}/
+            # Navigate up from data/run_v7/{name}/ to data/ then to data/backup/v7/{name}/
+            data_dir = instance_dir.parent.parent  # data/
+            backup_dir = data_dir / "backup" / "v7" / instance_name / str(old_version)
+            if backup_dir.exists():
+                return  # Already backed up this version
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            # Copy config.json and all coin override *.json files (excluding logs, temp files)
+            for item in instance_dir.iterdir():
+                if item.suffix == '.json' and item.name not in (
+                    'config.json.tmp', 'ignored_coins.json', 'approved_coins.json',
+                    'config_run.json', 'monitor.json'
+                ):
+                    shutil.copy2(str(item), str(backup_dir / item.name))
+            # Apply retention policy
+            self._prune_backups(data_dir / "backup" / "v7" / instance_name)
+        except Exception as e:
+            _log('Config', f'Backup before save failed: {e}', level='WARNING',
+                 meta={'traceback': traceback.format_exc()})
+
+    @staticmethod
+    def _get_backup_retention_limit(backup_v7_root: Path) -> int:
+        """Read max_versions from data/backup/v7/_settings.json, default 50."""
+        settings_file = backup_v7_root / "_settings.json"
+        if settings_file.exists():
+            try:
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+                val = int(settings.get("max_versions", 50))
+                return max(val, 1)
+            except (json.JSONDecodeError, OSError, ValueError):
+                pass
+        return 50
+
+    def _prune_backups(self, instance_backup_dir: Path):
+        """Remove oldest backups beyond the retention limit."""
+        try:
+            backup_v7_root = instance_backup_dir.parent  # data/backup/v7/
+            max_versions = self._get_backup_retention_limit(backup_v7_root)
+            # List all version directories (numeric or timestamp)
+            versions = sorted(
+                [d for d in instance_backup_dir.iterdir() if d.is_dir()],
+                key=lambda d: d.stat().st_mtime,
+                reverse=True,
+            )
+            if len(versions) <= max_versions:
+                return
+            for old_dir in versions[max_versions:]:
+                shutil.rmtree(str(old_dir), ignore_errors=True)
+            _log('Config', f'Pruned {len(versions) - max_versions} old backup(s) for {instance_backup_dir.name}')
+        except Exception as e:
+            _log('Config', f'Backup pruning failed: {e}', level='WARNING',
+                 meta={'traceback': traceback.format_exc()})
 
     def view_coin_overrides(self):
         if self.config["coin_overrides"]:
@@ -8772,8 +8202,9 @@ class BalanceCalculator:
             exchanges = []
 
         if len(exchanges) == 1:
-            self.exchange = Exchange(exchanges[0], None)
-            st.session_state.bc_exchange_id = exchanges[0]
+            if "bc_exchange_id" not in st.session_state:
+                self.exchange = Exchange(exchanges[0], None)
+                st.session_state.bc_exchange_id = exchanges[0]
             if "bc_missing_exchange_context" in st.session_state:
                 del st.session_state.bc_missing_exchange_context
             if "bc_require_exchange_choice" in st.session_state:
@@ -8827,7 +8258,10 @@ class BalanceCalculator:
             st.markdown("### Balance Calculator")
             st.markdown("This tool allows you to calculate the balance for a given configuration.")
             st.markdown("You can edit the configuration in the left text area and click on 'Calculate' to see the results.")
-            st.selectbox("Exchange", V7.list(), key="bc_exchange_id")
+            exchanges = V7.list()
+            ex_id = st.session_state.get("bc_exchange_id", self.exchange.id)
+            ex_idx = exchanges.index(ex_id) if ex_id in exchanges else 0
+            st.selectbox("Exchange", exchanges, index=ex_idx, key="bc_exchange_id")
             if st.button("Calculate"):
                 # Normalize XYZ coins: PB7 uses "xyz:AAPL", mapping uses "XYZ-AAPL"
                 def _norm_coin(c: str) -> str:

@@ -23,16 +23,28 @@ from typing import List, Dict, Optional, Any, Tuple
 # Add current directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from ParetoDataLoader import ParetoDataLoader, ConfigMetrics
+from ParetoDataLoader import ParetoDataLoader, ConfigMetrics, _extract_scoring_metric_names
 from ParetoVisualizations import ParetoVisualizations
 import pbgui_purefunc as pbfunc
 from Config import CURRENCY_METRICS, SHARED_METRICS
+from pbgui_func import redirect_to_fastapi_v7_backtest_draft
 
 PARETO_LOADER_CACHE_VERSION = 2
 
 
 class ParetoExplorer:
     """Pareto Explorer - Main Application"""
+
+    @staticmethod
+    def _open_backtest_editor_from_config(full_config_data: dict, fallback_name: str) -> None:
+        if not full_config_data:
+            st.error("❌ Full config data not available")
+            st.stop()
+
+        bt_cfg = full_config_data.get("backtest", {}) if isinstance(full_config_data, dict) else {}
+        base_dir = str(bt_cfg.get("base_dir") or "").strip()
+        draft_name = base_dir.split("/")[-1] if base_dir else str(fallback_name or "pareto_backtest")
+        redirect_to_fastapi_v7_backtest_draft(full_config_data, draft_name)
 
     class _PerfTimer:
         def __init__(self, enabled: bool):
@@ -145,6 +157,8 @@ class ParetoExplorer:
                 PARETO_LOADER_CACHE_VERSION,
             )
         if load_result.get("error"):
+            # Clear the cache so next attempt re-runs the load (don't cache errors)
+            ParetoExplorer._load_data.clear()
             err = load_result.get("error")
             if err:
                 st.error(f"❌ {err}")
@@ -669,35 +683,10 @@ class ParetoExplorer:
                 key=f"{key_prefix}_bt_modal_{config_index}",
             ):
                 try:
-                    import BacktestV7
-                    from pbgui_func import get_navi_paths, pb7dir
-                    from pathlib import Path
-                    import json
-                    import time
-
-                    if not full_config_data:
-                        st.error("❌ Full config data not available")
-                        st.stop()
-                    
-                    config_dir = Path(f'{pb7dir()}/configs/pareto_selected')
-                    config_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    timestamp = int(time.time())
-                    config_filename = f"pareto_config_{config.config_index}_{timestamp}.json"
-                    config_path = config_dir / config_filename
-                    
-                    with open(config_path, 'w') as f:
-                        json.dump(full_config_data, f, indent=2)
-                    
-                    # Cleanup backtest session state
-                    for key in ["bt_v7_queue", "bt_v7_results", "bt_v7_edit_symbol", 
-                               "config_v7_archives", "config_v7_config_archive"]:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    
-                    st.session_state.bt_v7 = BacktestV7.BacktestV7Item(str(config_path))
-                    st.switch_page(get_navi_paths()["V7_BACKTEST"])
-                    
+                    self._open_backtest_editor_from_config(
+                        full_config_data,
+                        f"pareto_config_{config.config_index}",
+                    )
                 except Exception as e:
                     st.error(f"❌ Error preparing backtest: {str(e)}")
                     import traceback
@@ -769,6 +758,11 @@ class ParetoExplorer:
                     base_limits = None
             if not isinstance(base_scoring, list) or not base_scoring:
                 base_scoring = ["loss_profit_ratio", "mdg_w", "sharpe_ratio"]
+            else:
+                # PB7 v7.9: scoring entries may be dicts {"metric": "...", "goal": "..."}
+                base_scoring = _extract_scoring_metric_names(base_scoring)
+                if not base_scoring:
+                    base_scoring = ["loss_profit_ratio", "mdg_w", "sharpe_ratio"]
             if base_limits is None:
                 base_limits = []
 
@@ -826,7 +820,7 @@ class ParetoExplorer:
                     return name_base
                 return name_base
 
-            scheme = _detect_metric_scheme([str(x) for x in base_scoring])
+            scheme = _detect_metric_scheme(base_scoring)
 
             def _limit(metric: str, penalize_if: str, value: Any) -> Dict[str, Any]:
                 return {"metric": metric, "penalize_if": penalize_if, "value": value}
@@ -1059,7 +1053,7 @@ class ParetoExplorer:
                     limits_out = _upsert_limit(limits_out, entry)
 
             # Final safety cap
-            scoring_out = _cap_objectives(_unique_keep_order([str(x) for x in scoring_out]), 4)
+            scoring_out = _cap_objectives(_unique_keep_order(scoring_out), 4)
 
             # Small, user-visible preview (no typing)
             st.write("**Planned optimize defaults**")
@@ -1920,10 +1914,15 @@ class ParetoExplorer:
         # Get Pareto configs and sort by composite score (performance × robustness)
         pareto_configs = self.loader.get_pareto_configs()
         
+        if not pareto_configs:
+            st.info("No Pareto-optimal configs found. This can happen when optimize results use a format not yet supported by the Explorer.")
+            return
+        
         # Calculate composite scores
         configs_with_scores = []
         for config in pareto_configs:
-            performance = config.suite_metrics.get(primary_metric, 0.0)
+            metrics = getattr(config, 'suite_metrics', None) or {}
+            performance = metrics.get(primary_metric, 0.0)
             robustness = self.loader.compute_overall_robustness(config)
             composite_score = performance * robustness  # Balanced score
             configs_with_scores.append((config, performance, robustness, composite_score))
@@ -2064,49 +2063,14 @@ class ParetoExplorer:
                 with col_action2:
                     if st.button(f"🚀 Run Backtest ##{i}_bt", key=f"run_bt_champ_{i}", width='stretch', type="primary"):
                         try:
-                            import BacktestV7
-                            from pbgui_func import get_navi_paths, pb7dir
-                            from pathlib import Path
-                            import json
-                            import time
-                            
                             # Load full config if not already loaded
                             if not full_config_data:
                                 full_config_data = self.loader.get_full_config(config.config_index)
-                            
-                            if not full_config_data:
-                                st.error("❌ Full config data not available")
-                                st.stop()
-                            
-                            # Create config directory
-                            config_dir = Path(f'{pb7dir()}/configs/pareto_selected')
-                            config_dir.mkdir(parents=True, exist_ok=True)
-                            
-                            # Generate unique filename
-                            timestamp = int(time.time())
-                            config_filename = f"pareto_champ_{config.config_index}_{timestamp}.json"
-                            config_path = config_dir / config_filename
-                            
-                            # Save the full config
-                            with open(config_path, 'w') as f:
-                                json.dump(full_config_data, f, indent=2)
-                            
-                            # Cleanup backtest session state
-                            if "bt_v7_queue" in st.session_state:
-                                del st.session_state.bt_v7_queue
-                            if "bt_v7_results" in st.session_state:
-                                del st.session_state.bt_v7_results
-                            if "bt_v7_edit_symbol" in st.session_state:
-                                del st.session_state.bt_v7_edit_symbol
-                            if "config_v7_archives" in st.session_state:
-                                del st.session_state.config_v7_archives
-                            if "config_v7_config_archive" in st.session_state:
-                                del st.session_state.config_v7_config_archive
-                            
-                            # Create BacktestV7Item and switch to backtest page
-                            st.session_state.bt_v7 = BacktestV7.BacktestV7Item(str(config_path))
-                            st.switch_page(get_navi_paths()["V7_BACKTEST"])
-                            
+
+                            self._open_backtest_editor_from_config(
+                                full_config_data,
+                                f"pareto_champ_{config.config_index}",
+                            )
                         except Exception as e:
                             st.error(f"❌ Error preparing backtest: {str(e)}")
                             import traceback
@@ -2573,46 +2537,10 @@ class ParetoExplorer:
         with col_bt2:
             if st.button("🚀 Run Backtest with this Config", width='stretch', type="primary"):
                 try:
-                    import BacktestV7
-                    from pbgui_func import get_navi_paths, pb7dir
-                    from pathlib import Path
-                    import json
-                    import time
-                    
-                    # Use already loaded full_config_data
-                    if not full_config_data:
-                        st.error("❌ Full config data not available")
-                        st.stop()
-                    
-                    # Create config directory if not exists
-                    config_dir = Path(f'{pb7dir()}/configs/pareto_selected')
-                    config_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    # Generate unique filename
-                    timestamp = int(time.time())
-                    config_filename = f"pareto_config_{config.config_index}_{timestamp}.json"
-                    config_path = config_dir / config_filename
-                    
-                    # Save the full config (has backtest, bot, optimize, live sections)
-                    with open(config_path, 'w') as f:
-                        json.dump(full_config_data, f, indent=2)
-                    
-                    # Cleanup backtest session state (like in OptimizeV7)
-                    if "bt_v7_queue" in st.session_state:
-                        del st.session_state.bt_v7_queue
-                    if "bt_v7_results" in st.session_state:
-                        del st.session_state.bt_v7_results
-                    if "bt_v7_edit_symbol" in st.session_state:
-                        del st.session_state.bt_v7_edit_symbol
-                    if "config_v7_archives" in st.session_state:
-                        del st.session_state.config_v7_archives
-                    if "config_v7_config_archive" in st.session_state:
-                        del st.session_state.config_v7_config_archive
-                    
-                    # Create BacktestV7Item and switch to backtest page
-                    st.session_state.bt_v7 = BacktestV7.BacktestV7Item(str(config_path))
-                    st.switch_page(get_navi_paths()["V7_BACKTEST"])
-                    
+                    self._open_backtest_editor_from_config(
+                        full_config_data,
+                        f"pareto_config_{config.config_index}",
+                    )
                 except Exception as e:
                     st.error(f"❌ Error preparing backtest: {str(e)}")
                     import traceback
