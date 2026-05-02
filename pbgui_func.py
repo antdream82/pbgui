@@ -11,7 +11,7 @@ import os
 from time import sleep
 from pathlib import Path
 from pbgui_purefunc import load_ini, save_ini, load_symbols_from_ini as _load_symbols_from_mapping
-# LogHandler removed: centralized debuglog removed per user request
+from Log import LogHandler
 from PBRemote import PBRemote
 from MonitorConfig import MonitorConfig
 from typing import Optional, Callable, Literal
@@ -114,6 +114,24 @@ def is_pb7_installed():
     return False
 
 PBGDIR = Path.cwd()
+
+
+def init_debuglog():
+    if "debuglog" not in st.session_state:
+        st.session_state.debuglog = LogHandler(
+            logger_name="debug_logger",
+            log_filename="debug.log",
+            backup_filename="debug.log.old",
+            base_dir=Path(f"{PBGDIR}/data/logs"),
+            max_bytes=50_000,
+            backup_count=1,
+        )
+
+
+def get_debuglog() -> LogHandler:
+    if "debuglog" not in st.session_state:
+        init_debuglog()
+    return st.session_state.debuglog
 
 
 def _resolve_browser_fastapi_urls(api_port: int) -> tuple[str, str, str, str]:
@@ -898,6 +916,72 @@ def redirect_to_fastapi_v7_backtest() -> None:
     url = (
         f"http://{browser_host}:{api_port}/api/backtest-v7/main_page"
         f"?token={token}"
+        f"&st_base={st_base}"
+    )
+    st.html(
+        f'<script>window.location.replace("{url}");</script>',
+        unsafe_allow_javascript=True,
+    )
+    st.stop()
+
+
+def redirect_to_fastapi_v7_edit_draft(config_dict: dict) -> None:
+    """POST a config as draft and redirect browser to the FastAPI v7 editor.
+
+    Used by 'Add to Run' from backtest results — opens the editor with
+    the config pre-loaded without saving anything to disk.
+    """
+    from api.auth import generate_token
+
+    api_host, api_port, success = _start_fastapi_server_if_needed()
+    if not success:
+        st.error(
+            f"⚠️ FastAPI server could not be started on {api_host}:{api_port}. "
+            "Please check **System → Services → API Server** or start manually: "
+            "`python PBApiServer.py`"
+        )
+        return
+
+    if "api_token" not in st.session_state:
+        user_id = (
+            st.session_state.get("user", {}).get("id")
+            or st.session_state.get("user")
+            or "anonymous"
+        )
+        st.session_state["api_token"] = generate_token(str(user_id), expires_in_seconds=86400).token
+
+    token = st.session_state["api_token"]
+
+    try:
+        resp = requests.post(
+            f"http://{api_host}:{api_port}/api/v7/draft",
+            json={"config": config_dict},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        draft_id = resp.json().get("draft_id", "")
+    except Exception as e:
+        st.error(f"Failed to create draft config: {e}")
+        return
+
+    browser_host = "127.0.0.1"
+    st_port = 8501
+    try:
+        req_host = st.context.headers.get("Host", "")
+        if req_host:
+            browser_host = req_host.split(":")[0] or "127.0.0.1"
+            if ":" in req_host:
+                st_port = int(req_host.split(":")[1])
+    except Exception:
+        pass
+
+    st_base = f"http://{browser_host}:{st_port}"
+    url = (
+        f"http://{browser_host}:{api_port}/api/v7/edit_page"
+        f"?new=1"
+        f"&draft_id={draft_id}"
+        f"&token={token}"
         f"&st_base={st_base}"
     )
     st.html(
