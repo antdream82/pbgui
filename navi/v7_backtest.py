@@ -381,7 +381,7 @@ if "bt_v7" in st.session_state:
     else:
         st.session_state.bt_v7_main_view = "Configs"
 _active = st.segmented_control(
-    "Navigation", options=_MAIN_TABS, default="Configs", key="bt_v7_main_view", label_visibility="collapsed"
+    "Navigation", options=_MAIN_TABS, key="bt_v7_main_view", label_visibility="collapsed"
 )
 if _active == "Queue":
     if "bt_v7_queue" not in st.session_state:
