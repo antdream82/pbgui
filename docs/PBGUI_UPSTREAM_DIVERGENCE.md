@@ -200,6 +200,75 @@ Start from `upstream/main`, then restore the following divergence packages:
     "max"}`. UI code should use the metric name for lookups into
     `suite_metrics`; dict scoring specs must not be used as hash keys.
 
+## Rebase Merge Compatibility Shims
+
+These are not intended as permanent feature divergences. They are compatibility
+restorations needed so the rebased upstream code can coexist with older PBGUI
+callers during the transition.
+
+### Config compatibility
+
+- [Config.py](/app/pbgui/Config.py)
+
+Restore the legacy `Config` class wrapper because older callers still import
+`from Config import Config`:
+
+- `Backtest.py`
+- `Instance.py`
+
+The wrapper must continue to provide:
+
+- `config`
+- `config_file`
+- `long_we`
+- `short_we`
+- `long_enabled`
+- `short_enabled`
+- `preview_grid`
+- `type`
+- `load_config()`
+- `save_config()`
+- `edit_config()`
+
+Without this wrapper, the app can fail during boot with:
+
+- `ImportError: cannot import name 'Config' from 'Config'`
+
+### FastAPI v7 navigation helpers
+
+- [pbgui_func.py](/app/pbgui/pbgui_func.py)
+- [navi/v7_backtest.py](/app/pbgui/navi/v7_backtest.py)
+
+Restore the FastAPI bridge helpers expected by the current V7 navigation:
+
+- `redirect_to_fastapi_v7_backtest()`
+- `redirect_to_fastapi_v7_edit_draft()`
+- `redirect_to_fastapi_v7_backtest_draft()`
+- `redirect_to_fastapi_v7_backtest_queue_draft()`
+- `get_debuglog()`
+
+These helpers are required by:
+
+- `navi/v7_backtest.py`
+- `navi/system_debuglog.py`
+- `Backtest.py`
+- `OptimizeV7.py`
+- `ParetoExplorer.py`
+
+If they are missing, Streamlit can fail at import time before the page renders.
+
+### Verification
+
+When reapplying upstream or rebuilding from a fresh checkout, verify the
+compatibility layer before considering the port complete:
+
+1. `python -m py_compile` over `Config.py`, `Backtest.py`, `Instance.py`,
+   `pbgui_func.py`, and the affected navigation pages.
+2. Import the legacy symbols directly from `pbgui_func` and `Config` under the
+   `venv_pbgui` interpreter.
+3. Re-run a minimal Streamlit boot of `pbgui.py` and confirm it reaches the
+   navigation shell.
+
 ## Package 3: Reverse-Proxy And Standalone Dashboard Behavior
 
 ### Files
