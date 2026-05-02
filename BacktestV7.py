@@ -2761,6 +2761,7 @@ class BacktestV7Results:
                     st.session_state.bt_v7 = BacktestV7Item(f'{self.results_d[row]["index"].result_path}/config.json')
                     if "bt_v7_results" in st.session_state:
                         del st.session_state.bt_v7_results
+                    st.session_state["_bt_v7_main_view_next"] = "Configs"
                     st.rerun()
     
     def calculate_balance(self):
