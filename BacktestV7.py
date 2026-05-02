@@ -2759,7 +2759,6 @@ class BacktestV7Results:
             if "Select" in ed["edited_rows"][row]:
                 if ed["edited_rows"][row]["Select"]:
                     st.session_state.bt_v7 = BacktestV7Item(f'{self.results_d[row]["index"].result_path}/config.json')
-                    st.session_state.bt_v7.config.backtest.end_date = "now"
                     if "bt_v7_results" in st.session_state:
                         del st.session_state.bt_v7_results
                     st.rerun()
