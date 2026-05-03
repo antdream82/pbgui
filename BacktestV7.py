@@ -2759,6 +2759,7 @@ class BacktestV7Results:
             if "Select" in ed["edited_rows"][row]:
                 if ed["edited_rows"][row]["Select"]:
                     st.session_state.bt_v7 = BacktestV7Item(f'{self.results_d[row]["index"].result_path}/config.json')
+                    st.session_state.bt_v7._clear_config_widget_session_state_after_import()
                     if "bt_v7_results" in st.session_state:
                         del st.session_state.bt_v7_results
                     st.session_state["_bt_v7_main_view_next"] = "Configs"
