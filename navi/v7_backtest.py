@@ -131,6 +131,8 @@ def bt_v7_list():
         if st.button(":material/add:", help="Add new Backtest"):
             st.session_state.bt_v7 = BacktestV7Item()
             st.session_state.bt_v7._clear_config_widget_session_state_after_import()
+            st.session_state.bt_v7._seed_suite_widget_session_state_after_import()
+            st.session_state.bt_v7_main_view = "Configs"
             st.rerun()
         if st.button(":material/chart_data:", help="View selected Backtest Results"):
             bt_v7_list.view_selected()
@@ -340,6 +342,7 @@ if "_relay_draft_id" in st.session_state:
                     _bt.config.config = _cfg
                     _bt.name = _draft_name
                     _bt._clear_config_widget_session_state_after_import()
+                    _bt._seed_suite_widget_session_state_after_import()
                     st.session_state.bt_v7 = _bt
                     st.session_state.bt_v7_main_view = "Configs"
     except Exception:
@@ -354,6 +357,7 @@ if "_relay_config_file" in st.session_state:
         _bt.config.load_config()
         _bt.name = _relay_instance
         _bt._clear_config_widget_session_state_after_import()
+        _bt._seed_suite_widget_session_state_after_import()
         st.session_state.bt_v7 = _bt
         st.session_state.bt_v7_main_view = "Configs"
 

@@ -1578,6 +1578,7 @@ class Backtest:
         self._backtest = {
             "balance_sample_divider": self._balance_sample_divider,
             "base_dir": self._base_dir,
+            "aggregate": self._suite.aggregate,
             "compress_cache": self._compress_cache,
             "end_date": self._end_date,
             "exchanges": self._exchanges,
@@ -1595,6 +1596,7 @@ class Backtest:
             "volume_normalization": self._volume_normalization,
             "coin_sources": self._coin_sources,
             "ohlcv_source_dir": self._ohlcv_source_dir,
+            "scenarios": [s.scenario for s in self._suite.scenarios],
             "suite_enabled": self._suite_enabled,
             "suite": self._suite.suite
         }
@@ -1605,6 +1607,8 @@ class Backtest:
     @property
     def backtest(self):
         # Dynamically update suite to ensure scenarios are current
+        self._backtest["aggregate"] = self._suite.aggregate
+        self._backtest["scenarios"] = [s.scenario for s in self._suite.scenarios]
         self._backtest["suite"] = self._suite.suite
         self._backtest["suite_enabled"] = self._suite_enabled
         self._backtest["coin_sources"] = self._coin_sources
@@ -1655,8 +1659,20 @@ class Backtest:
             self.coin_sources = new_backtest["coin_sources"]
         if "ohlcv_source_dir" in new_backtest:
             self.ohlcv_source_dir = new_backtest["ohlcv_source_dir"]
+        if "aggregate" in new_backtest:
+            self.aggregate = new_backtest["aggregate"]
+        if "scenarios" in new_backtest:
+            self.scenarios = new_backtest["scenarios"]
         if "suite" in new_backtest:
             self.suite = new_backtest["suite"]
+        elif "scenarios" in new_backtest or "aggregate" in new_backtest:
+            self.suite = {
+                "enabled": bool(new_backtest.get("suite_enabled", False)),
+                "include_base_scenario": new_backtest.get("include_base_scenario", True),
+                "base_label": new_backtest.get("base_label", "base"),
+                "aggregate": new_backtest.get("aggregate", {"default": "mean"}),
+                "scenarios": new_backtest.get("scenarios", []),
+            }
         if "suite_enabled" in new_backtest:
             self.suite_enabled = new_backtest["suite_enabled"]
     
@@ -1701,6 +1717,10 @@ class Backtest:
     def coin_sources(self): return self._coin_sources
     @property
     def ohlcv_source_dir(self): return self._ohlcv_source_dir
+    @property
+    def aggregate(self): return self._suite.aggregate
+    @property
+    def scenarios(self): return self._suite.scenarios
     @property
     def suite_enabled(self): return self._suite_enabled
     @property
@@ -1795,6 +1815,14 @@ class Backtest:
         else:
             self._ohlcv_source_dir = str(new_ohlcv_source_dir)
         self._backtest["ohlcv_source_dir"] = self._ohlcv_source_dir
+    @aggregate.setter
+    def aggregate(self, new_aggregate):
+        self._suite.aggregate = new_aggregate if new_aggregate else {"default": "mean"}
+        self._backtest["aggregate"] = self._suite.aggregate
+    @scenarios.setter
+    def scenarios(self, new_scenarios):
+        self._suite.scenarios = new_scenarios if new_scenarios else []
+        self._backtest["scenarios"] = [s.scenario for s in self._suite.scenarios]
     @suite_enabled.setter
     def suite_enabled(self, new_suite_enabled):
         self._suite_enabled = bool(new_suite_enabled)

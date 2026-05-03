@@ -91,6 +91,7 @@ def edit_v7_instance():
         if st.button("Backtest"):
             st.session_state.bt_v7 = BacktestV7Item(v7_instance.config.config_file)
             st.session_state.bt_v7._clear_config_widget_session_state_after_import()
+            st.session_state.bt_v7._seed_suite_widget_session_state_after_import()
             st.session_state.bt_v7.config.backtest.end_date = "now"
             del st.session_state.edit_v7_instance
             if "bt_v7_queue" in st.session_state:

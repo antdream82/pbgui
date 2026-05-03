@@ -1466,6 +1466,21 @@ class BacktestV7Item(ConfigV7Editor):
             ):
                 st.session_state.pop(k, None)
 
+    def _seed_suite_widget_session_state_after_import(self) -> None:
+        """Force fresh suite widget keys and seed them from the imported config."""
+
+        try:
+            st.session_state["bt_suite_key_ver"] = int(st.session_state.get("bt_suite_key_ver", 0) or 0) + 1
+            ver = int(st.session_state.get("bt_suite_key_ver", 0) or 0)
+            suite_obj = self.config.backtest.suite
+            st.session_state[f"bt_suite_enabled_{ver}"] = bool(getattr(suite_obj, "enabled", False))
+            st.session_state[f"bt_suite_include_base_{ver}"] = bool(getattr(suite_obj, "include_base_scenario", True))
+            st.session_state[f"bt_suite_base_label_{ver}"] = str(getattr(suite_obj, "base_label", "base") or "base")
+            aggregate = getattr(suite_obj, "aggregate", {}) or {}
+            st.session_state[f"bt_suite_aggregate_default_{ver}"] = str(aggregate.get("default", "mean"))
+        except Exception:
+            pass
+
     @st.dialog("Paste config", width="large")
     def import_instance(self):
         # Keep the raw text stable while the user is editing/pasting.
@@ -1495,21 +1510,7 @@ class BacktestV7Item(ConfigV7Editor):
                 # Reset widget state so UI reflects the imported config values.
                 # IMPORTANT: don't wipe bt_suite_key_ver.
                 self._clear_config_widget_session_state_after_import()
-
-                # Force fresh suite widget keys after import so stale frontend widget state
-                # cannot override the imported config (Enable Suite etc.).
-                st.session_state["bt_suite_key_ver"] = int(st.session_state.get("bt_suite_key_ver", 0) or 0) + 1
-                ver = int(st.session_state.get("bt_suite_key_ver", 0) or 0)
-
-                # Seed suite widgets for this new version from the imported config.
-                try:
-                    suite_obj = self.config.backtest.suite
-                    st.session_state[f"bt_suite_enabled_{ver}"] = bool(getattr(suite_obj, "enabled", False))
-                    st.session_state[f"bt_suite_include_base_{ver}"] = bool(getattr(suite_obj, "include_base_scenario", True))
-                    st.session_state[f"bt_suite_base_label_{ver}"] = str(getattr(suite_obj, "base_label", "base") or "base")
-                    st.session_state[f"bt_suite_aggregate_default_{ver}"] = str(getattr(getattr(suite_obj, "aggregate", {}) or {}, "get", lambda *_: "mean")("default", "mean"))
-                except Exception:
-                    pass
+                self._seed_suite_widget_session_state_after_import()
                 st.rerun()
         with col2:
             if st.button("Cancel"):
@@ -2760,8 +2761,10 @@ class BacktestV7Results:
                 if ed["edited_rows"][row]["Select"]:
                     st.session_state.bt_v7 = BacktestV7Item(f'{self.results_d[row]["index"].result_path}/config.json')
                     st.session_state.bt_v7._clear_config_widget_session_state_after_import()
+                    st.session_state.bt_v7._seed_suite_widget_session_state_after_import()
                     if "bt_v7_results" in st.session_state:
                         del st.session_state.bt_v7_results
+                    st.session_state.bt_v7_main_view = "Configs"
                     st.session_state["_bt_v7_main_view_next"] = "Configs"
                     st.rerun()
     
