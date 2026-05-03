@@ -2764,7 +2764,6 @@ class BacktestV7Results:
                     st.session_state.bt_v7._seed_suite_widget_session_state_after_import()
                     if "bt_v7_results" in st.session_state:
                         del st.session_state.bt_v7_results
-                    st.session_state.bt_v7_main_view = "Configs"
                     st.session_state["_bt_v7_main_view_next"] = "Configs"
                     st.rerun()
     
