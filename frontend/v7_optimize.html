@@ -1666,6 +1666,12 @@ textarea.json-invalid:focus {
   overflow: auto;
 }
 
+.modal-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+}
+
 #toast-stack {
   position: fixed;
   right: 18px;
@@ -2200,7 +2206,10 @@ textarea.json-invalid:focus {
     <div>
       <h3 id="json-modal-title">Pareto JSON</h3>
     </div>
-    <button class="btn ghost" id="btn-close-json">Close</button>
+    <div class="modal-head-actions">
+      <button class="btn ghost" id="btn-copy-json" title="Copy to clipboard">Copy</button>
+      <button class="btn ghost" id="btn-close-json">Close</button>
+    </div>
   </div>
   <div class="modal-body">
     <pre id="json-view" class="json-view"></pre>
@@ -2425,7 +2434,10 @@ var state = {
   plotSessionKind: '',
   logStatusTimer: null,
   hadActiveOptimizeRuns: false,
-  livePanelRefreshInFlight: false
+  livePanelRefreshInFlight: false,
+  livePanelLastRefreshAt: 0,
+  paretoLoading: false,
+  paretoLoadSeq: 0
 };
 
 var PANEL_META = {
@@ -2453,6 +2465,8 @@ var METRIC_PILL_LABELS = {
   gain: 'gain',
   drawdown_worst: 'dd',
   sharpe_ratio: 'sharpe',
+  gain_over_ui: 'gain/ui',
+  ulcer_index: 'ui',
   loss_profit_ratio: 'lpr',
   sortino_ratio: 'sortino',
   omega_ratio: 'omega',
@@ -8360,7 +8374,7 @@ function filterResults() {
   });
 }
 
-function setPanel(panel) {
+function setPanel(panel, options) {
   state.panel = panel;
   Object.keys(PANEL_META).forEach(function(name) {
     var active = name === panel;
@@ -8373,7 +8387,7 @@ function setPanel(panel) {
   el('ctx-results').style.display = panel === 'results' ? '' : 'none';
   el('ctx-paretos').style.display = panel === 'paretos' ? '' : 'none';
   location.hash = panel;
-  refreshLiveResultsDuringRun().catch(handleError);
+  if (!(options && options.skipRefresh)) refreshLiveResultsDuringRun().catch(handleError);
 }
 
 function selectPanel(panel) {
@@ -9176,6 +9190,12 @@ function renderParetos() {
     updateMetaCounts();
     return;
   }
+  if (state.paretoLoading) {
+    renderEmpty('paretos-tbody', 3 + (summaryKeys.length || 1), 'Loading pareto candidates...', '', '');
+    updateParetoSelectionUi();
+    updateMetaCounts();
+    return;
+  }
   if (!state.paretos.length) {
     renderEmpty('paretos-tbody', 3 + (summaryKeys.length || 1), 'No pareto files found for this result.', '', '');
     updateParetoSelectionUi();
@@ -9639,8 +9659,21 @@ function openJsonModal(title, payload) {
   el('json-view').textContent = typeof payload === 'string'
     ? payload
     : JSON.stringify(payload || {}, null, 2);
+  el('btn-copy-json').textContent = 'Copy';
   openBackdrop();
   el('json-modal').classList.add('open');
+}
+
+function copyJsonModal(btn) {
+  var view = el('json-view');
+  if (!view) return;
+  navigator.clipboard.writeText(view.textContent || '').then(function() {
+    var original = btn.textContent;
+    btn.textContent = 'Copied';
+    window.setTimeout(function() { btn.textContent = original; }, 1400);
+  }).catch(function() {
+    toast('Copy failed', 'err');
+  });
 }
 
 function openPlotModal(title, html) {
@@ -9833,6 +9866,7 @@ function refreshOptimizePageOnReturn() {
 }
 
 async function loadParetos(path, name) {
+  var requestSeq = ++state.paretoLoadSeq;
   if (path) {
     if (path !== state.selectedResultPath) {
       state.selectedParetos.clear();
@@ -9843,11 +9877,15 @@ async function loadParetos(path, name) {
   }
   if (!state.selectedResultPath) {
     state.paretos = [];
+    state.paretoLoading = false;
     state.selectedParetos.clear();
     clearParetoMeta({ keepStatistic: true });
     renderParetos();
     return;
   }
+  state.paretoLoading = true;
+  state.paretos = [];
+  renderParetos();
   var query = [
     'result_path=' + encodeURIComponent(state.selectedResultPath),
     'statistic=' + encodeURIComponent(normalizeParetoStatistic(state.paretoStatistic))
@@ -9855,10 +9893,17 @@ async function loadParetos(path, name) {
   if (state.paretoMode === 'suite' || state.paretoScenario !== 'Aggregated') {
     query.push('scenario=' + encodeURIComponent(state.paretoScenario || 'Aggregated'));
   }
-  var data = await apiFetch('/paretos?' + query.join('&'));
-  state.paretos = data.paretos || [];
-  applyParetoMeta(data.meta || {});
-  renderParetos();
+  try {
+    var data = await apiFetch('/paretos?' + query.join('&'));
+    if (requestSeq !== state.paretoLoadSeq) return;
+    state.paretos = data.paretos || [];
+    applyParetoMeta(data.meta || {});
+  } finally {
+    if (requestSeq === state.paretoLoadSeq) {
+      state.paretoLoading = false;
+      renderParetos();
+    }
+  }
 }
 
 async function deleteConfig(name) {
@@ -10018,7 +10063,7 @@ async function saveQueueSettingsFromModal() {
 async function queueAction(path, method, ambiguousIntent) {
   try {
     await apiFetch(path, { method: method || 'POST' });
-    await loadQueue();
+    loadQueue().catch(handleError);
   } catch (error) {
     if (queueConfigChoiceCandidates(error && error.detail).length) {
       openQueueConfigChoiceModal(error.detail, ambiguousIntent || '');
@@ -10075,6 +10120,10 @@ async function refreshLiveResultsDuringRun(force) {
   if (state.panel !== 'results' && state.panel !== 'paretos') return;
   if (!force && !hasActiveOptimizeRuns()) return;
   if (state.livePanelRefreshInFlight) return;
+  var now = Date.now();
+  var minInterval = state.panel === 'paretos' ? 30000 : 10000;
+  if (state.livePanelLastRefreshAt && now - state.livePanelLastRefreshAt < minInterval) return;
+  state.livePanelLastRefreshAt = now;
   state.livePanelRefreshInFlight = true;
   try {
     await refreshCurrentPanel();
@@ -10151,6 +10200,9 @@ function attachEventHandlers() {
     seedWholeSelectedResult().catch(handleError);
   });
   el('btn-close-editor').addEventListener('click', closeAllModals);
+  el('btn-copy-json').addEventListener('click', function(event) {
+    copyJsonModal(event.currentTarget);
+  });
   el('btn-close-json').addEventListener('click', closeAllModals);
   el('btn-close-settings').addEventListener('click', closeAllModals);
   el('btn-settings-cancel').addEventListener('click', closeAllModals);
@@ -10255,7 +10307,7 @@ function attachEventHandlers() {
     if (target.classList.contains('result-paretos')) {
       state.selectedResultPath = path;
       state.selectedResultName = target.dataset.name;
-      setPanel('paretos');
+      setPanel('paretos', { skipRefresh: true });
       return loadParetos(path, target.dataset.name).catch(handleError);
     }
     if (target.classList.contains('result-explorer')) return openParetoExplorer(path);
@@ -10330,7 +10382,7 @@ function initSelections() {
     var name = row.querySelector('td strong');
     state.selectedResultPath = path;
     state.selectedResultName = name ? name.textContent : state.selectedResultName;
-    setPanel('paretos');
+    setPanel('paretos', { skipRefresh: true });
     loadParetos(path, state.selectedResultName).catch(handleError);
   });
   initRowSelection('paretos-tbody', 'selectedParetos', 'data-path', function() {
@@ -10351,7 +10403,6 @@ function connectWS() {
   state.ws.onmessage = function(event) {
     var msg = JSON.parse(event.data);
     if (msg.type === 'queue_update') {
-      var hadActiveOptimizeRuns = state.hadActiveOptimizeRuns;
       state.queue = msg.items || [];
       if (msg.settings) {
         state.settings.autostart = normalizeAutostart(msg.settings.autostart);
@@ -10377,7 +10428,6 @@ function connectWS() {
       }
       renderQueueMaybeDeferred();
       state.hadActiveOptimizeRuns = hasActiveOptimizeRuns();
-      refreshLiveResultsDuringRun(state.hadActiveOptimizeRuns || hadActiveOptimizeRuns).catch(handleError);
     }
   };
   state.ws.onclose = function() {

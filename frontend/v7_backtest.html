@@ -890,7 +890,10 @@ textarea.json-invalid:focus {
 <div id="modal-root"><div class="modal-box" id="modal-box"></div></div>
 <div class="modal-overlay" id="import-modal">
   <div class="import-modal-box">
-    <h3>Paste config</h3>
+    <div class="modal-header">
+      <span class="modal-title">Paste config</span>
+      <button class="modal-btn" onclick="copyTextareaPanel('import-json', this)" title="Copy to clipboard">Copy</button>
+    </div>
     <div class="form-group">
       <label>Config Name</label>
       <input type="text" id="import-name" placeholder="my_backtest">
@@ -1985,6 +1988,7 @@ function showConfigEditor(name, cfg, rawOverride, paramStatusOverride) {
   html += '<div class="expander" id="exp-raw">' +
     '<div class="expander-header" onclick="toggleExpander(\'exp-raw\')">' +
       '<span class="arrow">▶</span> Raw JSON' +
+      '<button class="act-btn" onclick="event.stopPropagation();copyTextareaPanel(\'cfg-raw-json\',this)" title="Copy to clipboard" style="margin-left:auto;font-size:var(--fs-xs);padding:2px 8px">Copy</button>' +
     '</div>' +
     '<div class="expander-body">' +
       '<div class="form-group">' +
@@ -5160,6 +5164,15 @@ function copyJsonPanel(preId, btn) {
   navigator.clipboard.writeText(el.textContent).then(function() {
     var orig = btn.textContent;
     btn.textContent = '\u2713 Copied';
+    setTimeout(function() { btn.textContent = orig; }, 1400);
+  }).catch(function() { toast('Copy failed', 'err'); });
+}
+function copyTextareaPanel(textareaId, btn) {
+  var el = document.getElementById(textareaId);
+  if (!el) return;
+  navigator.clipboard.writeText(el.value || el.textContent || '').then(function() {
+    var orig = btn.textContent;
+    btn.textContent = 'Copied';
     setTimeout(function() { btn.textContent = orig; }, 1400);
   }).catch(function() { toast('Copy failed', 'err'); });
 }
