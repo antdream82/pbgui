@@ -986,9 +986,24 @@ def _build_optimize_runtime_status(item: dict) -> dict:
 
     eval_count = log_summary.get("eval") or log_summary.get("iter")
     target_iters = config_meta.get("iters")
+    starting_configs_total = log_summary.get("starting_configs_total")
+    if starting_configs_total is None:
+        starting_configs_total = log_summary.get("starting_configs_loaded")
+    target_total_evals = None
+    if isinstance(target_iters, int) and target_iters > 0:
+        target_total_evals = target_iters
+        if isinstance(starting_configs_total, int) and starting_configs_total > 0:
+            target_total_evals += starting_configs_total
+    elif isinstance(starting_configs_total, int) and starting_configs_total > 0:
+        target_total_evals = starting_configs_total
+    progress_done = eval_count
+    if not isinstance(progress_done, int) and isinstance(log_summary.get("starting_configs_done"), int):
+        progress_done = int(log_summary["starting_configs_done"])
     progress_pct = None
-    if isinstance(eval_count, int) and isinstance(target_iters, int) and target_iters > 0:
-        progress_pct = max(0.0, min(100.0, (eval_count / target_iters) * 100.0))
+    if isinstance(progress_done, int) and isinstance(target_total_evals, int) and target_total_evals > 0:
+        progress_pct = max(0.0, min(100.0, (progress_done / target_total_evals) * 100.0))
+    elif isinstance(progress_done, int) and isinstance(target_iters, int) and target_iters > 0:
+        progress_pct = max(0.0, min(100.0, (progress_done / target_iters) * 100.0))
 
     process_stats = _collect_optimize_process_stats(item.get("pid"))
     system_stats = _collect_optimize_system_stats()
@@ -1027,15 +1042,17 @@ def _build_optimize_runtime_status(item: dict) -> dict:
         "phase": phase,
         "progress": {
             "eval": eval_count,
+            "done": progress_done,
             "iter": log_summary.get("iter"),
             "target_iters": target_iters,
+            "target_total_evals": target_total_evals,
             "percent": progress_pct,
             "front": log_summary.get("front"),
             "pareto_added": log_summary.get("pareto_added"),
             "pareto_removed": log_summary.get("pareto_removed"),
             "starting_configs_loaded": log_summary.get("starting_configs_loaded"),
             "starting_configs_done": log_summary.get("starting_configs_done"),
-            "starting_configs_total": log_summary.get("starting_configs_total"),
+            "starting_configs_total": starting_configs_total,
             "population_size": log_summary.get("population_size"),
         },
         "runtime": {
