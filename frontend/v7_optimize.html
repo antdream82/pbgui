@@ -3002,8 +3002,8 @@ function renderLimitSelectControl(id, options, selectedValue, onChange, defaultL
   return '<select id="' + id + '" onchange="' + onChange + '">' + renderLimitSelectOptions(options, selectedValue, defaultLabel) + '</select>';
 }
 
-function renderLimitNumberControl(id, value, onChange) {
-  return '<input type="number" id="' + id + '" step="0.000001" value="' + escAttr(String(value == null ? '' : value)) + '" oninput="' + onChange + '">';
+function renderLimitNumberControl(id, value, onInput, onBlur) {
+  return '<input type="text" id="' + id + '" inputmode="decimal" spellcheck="false" autocomplete="off" value="' + escAttr(String(value == null ? '' : value)) + '" oninput="' + onInput + '"' + (onBlur ? ' onblur="' + onBlur + '"' : '') + '>';
 }
 
 function renderLimitField(label, controlHtml, tip, span, extraClass) {
@@ -3015,8 +3015,8 @@ function renderInlineSelectControl(options, selectedValue, onChange, defaultLabe
   return '<select onchange="' + onChange + '">' + renderLimitSelectOptions(options, selectedValue, defaultLabel) + '</select>';
 }
 
-function renderInlineNumberInput(value, onChange) {
-  return '<input type="number" step="0.000001" value="' + escAttr(String(value == null ? '' : value)) + '" oninput="' + onChange + '">';
+function renderInlineNumberInput(value, onInput, onBlur) {
+  return '<input type="text" inputmode="decimal" spellcheck="false" autocomplete="off" value="' + escAttr(String(value == null ? '' : value)) + '" oninput="' + onInput + '"' + (onBlur ? ' onblur="' + onBlur + '"' : '') + '>';
 }
 
 function renderInlineMetricEditor(form, updateFnName) {
@@ -3073,12 +3073,12 @@ function renderInlineMetricRowEditor(form, updateFnName) {
 function renderInlineLimitValueEditor(form, updateFnName) {
   if (isLimitRangePenalize(form.penalize_if)) {
     return '<div class="limits-inline-range">'
-      + renderInlineNumberInput(form.range_low, updateFnName + "('range_low', this.value)")
-      + renderInlineNumberInput(form.range_high, updateFnName + "('range_high', this.value)")
+      + renderInlineNumberInput(form.range_low, updateFnName + "('range_low', this.value, false)", updateFnName + "('range_low', this.value, true)")
+      + renderInlineNumberInput(form.range_high, updateFnName + "('range_high', this.value, false)", updateFnName + "('range_high', this.value, true)")
       + '</div>';
   }
   return '<div class="limits-inline-stack">'
-    + renderInlineNumberInput(form.value, updateFnName + "('value', this.value)")
+    + renderInlineNumberInput(form.value, updateFnName + "('value', this.value, false)", updateFnName + "('value', this.value, true)")
     + '</div>';
 }
 
@@ -3119,11 +3119,14 @@ function getLimitEntries() {
   return normalizeLimitEntries(state.limitEntries);
 }
 
-function updateLimitAddField(field, value) {
+function updateLimitAddField(field, value, commit) {
   var next = Object.assign({}, state.limitAddForm || defaultLimitForm());
   next[field] = value;
-  state.limitAddForm = normalizeLimitForm(next);
-  renderOptimizeLimitsEditor();
+  state.limitAddForm = commit ? normalizeLimitForm(next) : next;
+  if (commit || field === 'metric_type' || field === 'base_metric' || field === 'currency' || field === 'penalize_if' || field === 'stat' || field === 'enabled') {
+    renderOptimizeLimitsEditor();
+  }
+  if (commit) scheduleStructuredEditorSync();
 }
 
 function startLimitAdd() {
@@ -3140,12 +3143,15 @@ function cancelLimitAdd() {
   renderOptimizeLimitsEditor();
 }
 
-function updateLimitEditField(field, value) {
+function updateLimitEditField(field, value, commit) {
   if (state.limitEditIndex < 0) return;
   var next = Object.assign({}, state.limitEditForm || defaultLimitForm());
   next[field] = value;
-  state.limitEditForm = normalizeLimitForm(next);
-  renderOptimizeLimitsEditor();
+  state.limitEditForm = commit ? normalizeLimitForm(next) : next;
+  if (commit || field === 'metric_type' || field === 'base_metric' || field === 'currency' || field === 'penalize_if' || field === 'stat' || field === 'enabled') {
+    renderOptimizeLimitsEditor();
+  }
+  if (commit) scheduleStructuredEditorSync();
 }
 
 function startLimitEdit(index) {
@@ -3280,7 +3286,8 @@ function renderLimitForm(prefix, rawForm) {
       renderLimitNumberControl(
         prefix + '-range-low',
         form.range_low,
-        (prefix === 'add' ? "updateLimitAddField('range_low', this.value)" : "updateLimitEditField('range_low', this.value)")
+        (prefix === 'add' ? "updateLimitAddField('range_low', this.value, false)" : "updateLimitEditField('range_low', this.value, false)"),
+        (prefix === 'add' ? "updateLimitAddField('range_low', this.value, true)" : "updateLimitEditField('range_low', this.value, true)")
       ),
       meta.range_low_help,
       1
@@ -3290,7 +3297,8 @@ function renderLimitForm(prefix, rawForm) {
       renderLimitNumberControl(
         prefix + '-range-high',
         form.range_high,
-        (prefix === 'add' ? "updateLimitAddField('range_high', this.value)" : "updateLimitEditField('range_high', this.value)")
+        (prefix === 'add' ? "updateLimitAddField('range_high', this.value, false)" : "updateLimitEditField('range_high', this.value, false)"),
+        (prefix === 'add' ? "updateLimitAddField('range_high', this.value, true)" : "updateLimitEditField('range_high', this.value, true)")
       ),
       meta.range_high_help,
       1
@@ -3301,7 +3309,8 @@ function renderLimitForm(prefix, rawForm) {
       renderLimitNumberControl(
         prefix + '-value',
         form.value,
-        (prefix === 'add' ? "updateLimitAddField('value', this.value)" : "updateLimitEditField('value', this.value)")
+        (prefix === 'add' ? "updateLimitAddField('value', this.value, false)" : "updateLimitEditField('value', this.value, false)"),
+        (prefix === 'add' ? "updateLimitAddField('value', this.value, true)" : "updateLimitEditField('value', this.value, true)")
       ),
       meta.value_help,
       2
