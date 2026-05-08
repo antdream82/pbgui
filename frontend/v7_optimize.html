@@ -2470,6 +2470,8 @@ var METRIC_PILL_LABELS = {
   loss_profit_ratio: 'lpr',
   sortino_ratio: 'sortino',
   omega_ratio: 'omega',
+  wallet_exposure_mean_long: 'we long',
+  wallet_exposure_mean_short: 'we short',
   equity_balance_diff_neg_max: 'eq diff'
 };
 var PARETO_SUMMARY_ORDER = Object.keys(METRIC_PILL_LABELS);
@@ -2681,6 +2683,7 @@ function normalizeLimitsMeta(raw) {
     currency_help: String(meta.currency_help || ''),
     penalize_help: String(meta.penalize_help || ''),
     stat_help: String(meta.stat_help || ''),
+    scenario_help: String(meta.scenario_help || 'Optional suite scenario label. Scenario-specific limits ignore stat.'),
     goal_help: String(meta.goal_help || ''),
     value_help: String(meta.value_help || ''),
     range_low_help: String(meta.range_low_help || ''),
@@ -2736,6 +2739,39 @@ function buildLimitMetricName(baseMetric, currency) {
   if (!base) return '';
   if (isLimitCurrencyMetric(base)) return base + '_' + (currency === 'btc' ? 'btc' : 'usd');
   return base;
+}
+
+function getOptimizeSuiteScenarioLabels() {
+  var labels = [];
+  var seen = {};
+  var cfg = state.editorLastConfig && typeof state.editorLastConfig === 'object'
+    ? state.editorLastConfig
+    : {};
+  var scenarios = cfg.backtest && Array.isArray(cfg.backtest.scenarios) ? cfg.backtest.scenarios : [];
+  scenarios.forEach(function(scenario) {
+    var label = '';
+    if (scenario && typeof scenario === 'object') {
+      label = String(scenario.label || scenario.name || '').trim();
+    } else {
+      label = String(scenario || '').trim();
+    }
+    if (!label || seen[label]) return;
+    seen[label] = true;
+    labels.push(label);
+  });
+  return labels;
+}
+
+function limitScenarioOptions(currentScenario) {
+  var options = getOptimizeSuiteScenarioLabels().map(function(label) {
+    return { value: label, label: label };
+  });
+  var scenario = String(currentScenario || '').trim();
+  if (scenario && !options.some(function(option) { return option.value === scenario; })) {
+    options.unshift({ value: scenario, label: scenario });
+  }
+  options.unshift({ value: '', label: 'all/stat' });
+  return options;
 }
 
 function splitLimitMetricName(metric) {
@@ -2863,6 +2899,10 @@ function normalizeLimitEntry(rawEntry) {
   if (rawEntry.stat != null && String(rawEntry.stat).trim() !== '') {
     normalized.stat = String(rawEntry.stat).trim().toLowerCase();
   }
+  if (rawEntry.scenario != null && String(rawEntry.scenario).trim() !== '') {
+    normalized.scenario = String(rawEntry.scenario).trim();
+    delete normalized.stat;
+  }
   if (isLimitRangePenalize(penalizeIf)) {
     var range = Array.isArray(rawEntry.range) ? rawEntry.range : [0, 1];
     var low = normalizeLimitNumber(range[0], 0);
@@ -2907,6 +2947,7 @@ function defaultLimitForm(metricType) {
     enabled: true,
     penalize_if: 'greater_than',
     stat: '',
+    scenario: '',
     value: 0,
     range_low: 0,
     range_high: 1
@@ -2924,6 +2965,8 @@ function normalizeLimitForm(rawForm) {
   var currency = currencyMetric && meta.currency_options.indexOf(form.currency) >= 0 ? form.currency : (currencyMetric ? 'usd' : '');
   var penalizeIf = normalizeLimitPenalizeIf(form.penalize_if);
   var stat = form.stat == null ? '' : String(form.stat);
+  var scenario = form.scenario == null ? '' : String(form.scenario).trim();
+  if (scenario) stat = '';
   if (stat !== '' && meta.stat_options.indexOf(stat) < 0) {
     meta.stat_options = uniqStrings(meta.stat_options.concat([stat]));
   }
@@ -2934,6 +2977,7 @@ function normalizeLimitForm(rawForm) {
     enabled: form.enabled == null ? true : !!form.enabled,
     penalize_if: penalizeIf,
     stat: stat,
+    scenario: scenario,
     value: normalizeLimitNumber(form.value, 0),
     range_low: normalizeLimitNumber(form.range_low, 0),
     range_high: normalizeLimitNumber(form.range_high, 1)
@@ -2950,6 +2994,7 @@ function limitEntryToForm(entry) {
     enabled: normalized.enabled !== false,
     penalize_if: normalized.penalize_if,
     stat: normalized.stat || '',
+    scenario: normalized.scenario || '',
     value: normalized.value,
     range_low: normalized.range ? normalized.range[0] : 0,
     range_high: normalized.range ? normalized.range[1] : 1
@@ -2964,7 +3009,8 @@ function buildLimitEntryFromForm(rawForm) {
     penalize_if: form.penalize_if,
     enabled: form.enabled !== false
   };
-  if (form.stat) entry.stat = form.stat;
+  if (form.scenario) entry.scenario = form.scenario;
+  else if (form.stat) entry.stat = form.stat;
   if (isLimitRangePenalize(form.penalize_if)) {
     if (form.range_high < form.range_low) throw new Error('Range Low must be less than or equal to Range High.');
     entry.range = [form.range_low, form.range_high];
@@ -3122,8 +3168,10 @@ function getLimitEntries() {
 function updateLimitAddField(field, value, commit) {
   var next = Object.assign({}, state.limitAddForm || defaultLimitForm());
   next[field] = value;
+  if (field === 'scenario' && String(value || '').trim()) next.stat = '';
+  if (field === 'stat' && String(value || '').trim()) next.scenario = '';
   state.limitAddForm = commit ? normalizeLimitForm(next) : next;
-  if (commit || field === 'metric_type' || field === 'base_metric' || field === 'currency' || field === 'penalize_if' || field === 'stat' || field === 'enabled') {
+  if (commit || field === 'metric_type' || field === 'base_metric' || field === 'currency' || field === 'penalize_if' || field === 'stat' || field === 'scenario' || field === 'enabled') {
     renderOptimizeLimitsEditor();
   }
   if (commit) scheduleStructuredEditorSync();
@@ -3147,8 +3195,10 @@ function updateLimitEditField(field, value, commit) {
   if (state.limitEditIndex < 0) return;
   var next = Object.assign({}, state.limitEditForm || defaultLimitForm());
   next[field] = value;
+  if (field === 'scenario' && String(value || '').trim()) next.stat = '';
+  if (field === 'stat' && String(value || '').trim()) next.scenario = '';
   state.limitEditForm = commit ? normalizeLimitForm(next) : next;
-  if (commit || field === 'metric_type' || field === 'base_metric' || field === 'currency' || field === 'penalize_if' || field === 'stat' || field === 'enabled') {
+  if (commit || field === 'metric_type' || field === 'base_metric' || field === 'currency' || field === 'penalize_if' || field === 'stat' || field === 'scenario' || field === 'enabled') {
     renderOptimizeLimitsEditor();
   }
   if (commit) scheduleStructuredEditorSync();
@@ -3219,6 +3269,7 @@ function renderLimitForm(prefix, rawForm) {
   var statOptions = meta.stat_options.map(function(value) {
     return { value: String(value), label: value === '' ? 'default' : String(value) };
   });
+  var scenarioOptions = limitScenarioOptions(form.scenario);
   var html = '<div class="form-row cols-8">'
     + renderLimitField(
       'Type',
@@ -3278,6 +3329,18 @@ function renderLimitForm(prefix, rawForm) {
       meta.stat_help,
       1
     )
+    + renderLimitField(
+      'Scenario',
+      renderLimitSelectControl(
+        prefix + '-scenario',
+        scenarioOptions,
+        form.scenario,
+        (prefix === 'add' ? "updateLimitAddField('scenario', this.value)" : "updateLimitEditField('scenario', this.value)"),
+        'all/stat'
+      ),
+      meta.scenario_help,
+      1
+    )
     + '<div class="form-group" style="justify-content:flex-end"><label>&nbsp;</label><div class="chk-row"><input type="checkbox" id="' + prefix + '-enabled"' + (form.enabled !== false ? ' checked' : '') + ' onchange="' + (prefix === 'add' ? "updateLimitAddField('enabled', this.checked)" : "updateLimitEditField('enabled', this.checked)") + '"><label for="' + prefix + '-enabled">enabled</label></div></div>';
 
   if (isRange) {
@@ -3331,12 +3394,22 @@ function renderOptimizeLimitsEditor() {
   var statOptions = meta.stat_options.map(function(value) {
     return { value: String(value), label: value === '' ? 'default' : String(value) };
   });
+  function renderStatScenarioCell(form, updateFnName) {
+    return '<div class="limits-inline-stack">'
+      + renderInlineSelectControl(statOptions, form.scenario ? '' : form.stat, updateFnName + "('stat', this.value)", 'default')
+      + renderInlineSelectControl(limitScenarioOptions(form.scenario), form.scenario, updateFnName + "('scenario', this.value)", 'all/stat')
+      + '</div>';
+  }
+  function formatLimitStatScenario(entry) {
+    if (entry && entry.scenario) return 'scenario: ' + entry.scenario;
+    return entry && entry.stat ? entry.stat : '';
+  }
 
   if (entries.length) {
     html += '<div class="limits-table-wrap"><table class="limits-table limits-table-limits"><colgroup>'
       + '<col class="col-metric"><col class="col-penalize"><col class="col-stat"><col class="col-value"><col class="col-enabled"><col class="col-actions">'
       + '</colgroup><thead><tr>'
-      + '<th>Metric</th><th>Penalize If</th><th>Stat</th><th>Value</th><th>Enabled</th><th>Actions</th>'
+      + '<th>Metric</th><th>Penalize If</th><th>Stat / Scenario</th><th>Value</th><th>Enabled</th><th>Actions</th>'
       + '</tr></thead><tbody>';
     entries.forEach(function(entry, index) {
       if (state.limitEditIndex === index && state.limitEditForm) {
@@ -3346,9 +3419,7 @@ function renderOptimizeLimitsEditor() {
           + '<td><div class="limits-inline-stack">'
             + renderInlineSelectControl(meta.penalize_if_options, form.penalize_if, "updateLimitEditField('penalize_if', this.value)")
             + '</div></td>'
-          + '<td><div class="limits-inline-stack">'
-            + renderInlineSelectControl(statOptions, form.stat, "updateLimitEditField('stat', this.value)", 'default')
-            + '</div></td>'
+          + '<td>' + renderStatScenarioCell(form, 'updateLimitEditField') + '</td>'
           + '<td>' + renderInlineLimitValueEditor(form, 'updateLimitEditField') + '</td>'
           + '<td><div class="limits-inline-check"><input type="checkbox" id="limit-inline-enabled-' + index + '"' + (form.enabled !== false ? ' checked' : '') + ' onchange="updateLimitEditField(\'enabled\', this.checked)"></div></td>'
           + '<td class="cell-actions"><div class="limits-inline-actions">'
@@ -3362,7 +3433,7 @@ function renderOptimizeLimitsEditor() {
       html += '<tr class="limits-editable-row" onclick="startLimitEdit(' + index + ')" title="Click row to edit inline">'
         + '<td class="mono">' + escapeHtml(entry.metric || '?') + '</td>'
         + '<td>' + escapeHtml(entry.penalize_if || '?') + '</td>'
-        + '<td>' + escapeHtml(entry.stat || '') + '</td>'
+        + '<td>' + escapeHtml(formatLimitStatScenario(entry)) + '</td>'
         + '<td class="mono">' + escapeHtml(formatLimitDisplayValue(entry)) + '</td>'
         + '<td>' + escapeHtml(entry.enabled === false ? 'no' : 'yes') + '</td>'
         + '<td class="cell-actions"><div class="limits-inline-actions">'
@@ -3381,16 +3452,14 @@ function renderOptimizeLimitsEditor() {
     html += '<div class="limits-table-wrap"><table class="limits-table limits-table-limits"><colgroup>'
       + '<col class="col-metric"><col class="col-penalize"><col class="col-stat"><col class="col-value"><col class="col-enabled"><col class="col-actions">'
       + '</colgroup><thead><tr>'
-      + '<th>Metric</th><th>Penalize If</th><th>Stat</th><th>Value</th><th>Enabled</th><th>Actions</th>'
+      + '<th>Metric</th><th>Penalize If</th><th>Stat / Scenario</th><th>Value</th><th>Enabled</th><th>Actions</th>'
       + '</tr></thead><tbody>'
       + '<tr class="is-editing">'
       + '<td>' + renderInlineMetricEditor(addForm, 'updateLimitAddField') + '</td>'
       + '<td><div class="limits-inline-stack">'
         + renderInlineSelectControl(meta.penalize_if_options, addForm.penalize_if, "updateLimitAddField('penalize_if', this.value)")
         + '</div></td>'
-      + '<td><div class="limits-inline-stack">'
-        + renderInlineSelectControl(statOptions, addForm.stat, "updateLimitAddField('stat', this.value)", 'default')
-        + '</div></td>'
+      + '<td>' + renderStatScenarioCell(addForm, 'updateLimitAddField') + '</td>'
       + '<td>' + renderInlineLimitValueEditor(addForm, 'updateLimitAddField') + '</td>'
       + '<td><div class="limits-inline-check"><input type="checkbox" id="limit-add-enabled"' + (addForm.enabled !== false ? ' checked' : '') + ' onchange="updateLimitAddField(\'enabled\', this.checked)"></div></td>'
       + '<td class="cell-actions"><div class="limits-inline-actions">'

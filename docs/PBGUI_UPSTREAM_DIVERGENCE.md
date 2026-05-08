@@ -155,6 +155,8 @@ Start from `upstream/main`, then restore the following divergence packages:
 
 1. Optimize results must show the local performance columns used in production:
    - `gain_per_actual_exposure`
+   - `wallet_exposure_mean_long`
+   - `wallet_exposure_mean_short`
    - `ulcer_index`
    - `adg_over_ui`
    - `gain_over_ui`
@@ -179,7 +181,9 @@ Start from `upstream/main`, then restore the following divergence packages:
    - live config paths such as `live.hedge_mode`
 
 5. Optimize limits UI must support optional suite `scenario`.
-   When `scenario` is set, `stat` must be disabled.
+   When `scenario` is set, `stat` must be disabled. The FastAPI editor must
+   expose scenario labels from `backtest.scenarios` so limits can target
+   bear/crash scenarios directly instead of only aggregate `stat` values.
 
 6. Old optimize payloads that do not contain a metric must not render a
    misleading `0`.
@@ -392,6 +396,39 @@ compatibility layer before considering the port complete:
 
 2. Streamlit segmented controls must use non-empty labels with
    `label_visibility="collapsed"`.
+
+## Package 7: Optimize And Backtest Fast-Path UI Polish
+
+### Files
+
+- [api/optimize_v7.py](/app/pbgui/api/optimize_v7.py)
+- [frontend/v7_backtest.html](/app/pbgui/frontend/v7_backtest.html)
+- [frontend/v7_optimize.html](/app/pbgui/frontend/v7_optimize.html)
+
+### Required behavior
+
+1. Optimize action buttons must stay responsive even when the result folders
+   are large. The page should avoid forcing full `/configs`, `/queue`, and
+   `/results` re-reads on every websocket event or button click.
+
+2. Optimize list endpoints should use lightweight cached reads where possible.
+   `/configs`, `/queue`, and `/results` may be short-TTL cached as long as the
+   UI still refreshes correctly after mutating actions.
+
+3. Optimize result refreshes must not compete with user actions. Pareto/result
+   clicks should avoid duplicate reloads, show immediate loading feedback, and
+   ignore stale responses from older requests.
+
+4. Optimize pareto views should expose the newer production columns used in the
+   local workflow:
+   - `gain_over_ui`
+   - `ulcer_index`
+   - `wallet_exposure_mean_long`
+   - `wallet_exposure_mean_short`
+
+5. JSON inspection modals in both Optimize and Backtest must keep a top-right
+   copy button so the current JSON payload can be copied directly from the
+   view.
 
 ## Intentional Non-Reapplications
 

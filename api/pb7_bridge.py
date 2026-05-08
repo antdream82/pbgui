@@ -255,6 +255,7 @@ def get_optimize_limits_meta_payload() -> dict[str, Any]:
         "currency_help": pbgui_help.limit_currency,
         "penalize_help": pbgui_help.limits_penalize_if,
         "stat_help": pbgui_help.limits_stat,
+        "scenario_help": "Optional suite scenario label. When set, PB7 evaluates this limit against that scenario value directly and omits stat.",
         "goal_help": "PB7 stores optimize.scoring as explicit {metric, goal} objects. Known metrics prefill Passivbot's default min/max goal; metrics without a PB7 default should be checked explicitly.",
         "value_help": pbgui_help.limit_value,
         "range_low_help": pbgui_help.limit_range_low,

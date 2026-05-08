@@ -68,6 +68,8 @@ _RESULT_SUMMARY_FIELDS = (
     ("loss_profit_ratio", ("loss_profit_ratio",)),
     ("sortino_ratio", ("sortino_ratio_usd", "sortino_ratio")),
     ("omega_ratio", ("omega_ratio_usd", "omega_ratio")),
+    ("wallet_exposure_mean_long", ("wallet_exposure_mean_long",)),
+    ("wallet_exposure_mean_short", ("wallet_exposure_mean_short",)),
     (
         "equity_balance_diff_neg_max",
         ("equity_balance_diff_neg_max_usd", "equity_balance_diff_neg_max"),
