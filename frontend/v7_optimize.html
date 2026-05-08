@@ -1535,15 +1535,20 @@ textarea.json-invalid:focus {
 }
 
 .plot-modal {
-  width: min(1280px, calc(100vw - var(--sp-lg) * 2));
-  height: calc(100vh - var(--sp-lg) * 2);
-  max-height: calc(100vh - var(--sp-lg) * 2);
+  width: calc(100vw - 24px);
+  height: calc(100vh - 24px);
+  max-height: calc(100vh - 24px);
+  border-radius: 14px;
 }
 
 .plot-modal .modal-body {
   flex: 1;
   padding: 0;
   overflow: hidden;
+}
+
+.plot-modal .plot-frame {
+  background: #f7fafc;
 }
 
 .plot-frame {
@@ -2278,7 +2283,10 @@ textarea.json-invalid:focus {
     <div>
       <h3 id="plot-modal-title">PB7 3D plot</h3>
     </div>
-    <button class="btn ghost" id="btn-close-plot">Close</button>
+    <div class="modal-head-actions">
+      <button class="btn ghost" id="btn-open-plot-tab" title="Open the current dashboard in a new tab">Open in new tab</button>
+      <button class="btn ghost" id="btn-close-plot">Close</button>
+    </div>
   </div>
   <div class="modal-body">
     <iframe id="plot-frame" class="plot-frame" title="PB7 3D plot"></iframe>
@@ -2432,6 +2440,7 @@ var state = {
   logFilename: '',
   plotSessionId: '',
   plotSessionKind: '',
+  plotSessionUrl: '',
   logStatusTimer: null,
   hadActiveOptimizeRuns: false,
   livePanelRefreshInFlight: false,
@@ -9252,6 +9261,7 @@ function stopActivePlotSession() {
   var sessionKind = state.plotSessionKind;
   state.plotSessionId = '';
   state.plotSessionKind = '';
+  state.plotSessionUrl = '';
   if (!sessionId || sessionKind !== 'pareto-dash') return;
   apiFetch('/results/pareto-dash/' + encodeURIComponent(sessionId), {
     method: 'DELETE'
@@ -9683,8 +9693,10 @@ function copyJsonModal(btn) {
 function openPlotModal(title, html) {
   stopActivePlotSession();
   resetPlotFrame();
+  state.plotSessionUrl = '';
   el('plot-modal-title').textContent = title;
   el('plot-frame').srcdoc = html || '';
+  el('btn-open-plot-tab').disabled = true;
   openBackdrop();
   el('plot-modal').classList.add('open');
 }
@@ -9694,10 +9706,21 @@ function openPlotUrlModal(title, url, sessionId, sessionKind) {
   resetPlotFrame();
   state.plotSessionId = sessionId || '';
   state.plotSessionKind = sessionKind || '';
+  state.plotSessionUrl = url || '';
   el('plot-modal-title').textContent = title;
   el('plot-frame').src = url || 'about:blank';
+  el('btn-open-plot-tab').disabled = !state.plotSessionUrl;
   openBackdrop();
   el('plot-modal').classList.add('open');
+}
+
+function openCurrentPlotInNewTab() {
+  var url = String(state.plotSessionUrl || '').trim();
+  if (!url) {
+    toast('No dashboard URL available.', 'warn');
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function ensureLogViewer() {
@@ -10252,7 +10275,11 @@ function attachEventHandlers() {
     state.settingsModalDirty = true;
   });
   el('btn-close-plot').addEventListener('click', closeAllModals);
-  el('modal-backdrop').addEventListener('click', closeAllModals);
+  el('btn-open-plot-tab').addEventListener('click', openCurrentPlotInNewTab);
+  el('modal-backdrop').addEventListener('click', function() {
+    if (el('plot-modal').classList.contains('open')) return;
+    closeAllModals();
+  });
   el('btn-editor-format').addEventListener('click', function() {
     var parsed = parseEditorJson();
     if (!parsed.ok) {
