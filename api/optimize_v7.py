@@ -58,6 +58,7 @@ SERVICE = "OptimizeV7API"
 router = APIRouter()
 
 _CONFIG_SECTIONS = ("backtest", "bot", "live", "optimize", "pbgui", "coin_overrides")
+_EDITOR_CACHE_TTL = 120.0
 _RESULT_SUMMARY_FIELDS = (
     ("adg", ("adg_w_usd", "adg_usd", "adg_weighted", "adg")),
     ("gain", ("gain_usd", "gain")),
@@ -119,6 +120,7 @@ _CONFIGS_CACHE_TTL = 10.0
 _RESULTS_CACHE_TTL = 10.0
 _QUEUE_CACHE_TTL = 1.0
 _RESULT_META_CACHE_TTL = 3600.0
+_PARETO_FILE_CACHE_TTL = 300.0
 
 
 def _api_cache_get(key: str, ttl: float):
@@ -214,6 +216,21 @@ def _merge_nested_dicts(base: dict, overlay: dict) -> dict:
     return merged
 
 
+def _optimize_editor_cache_key(cfg_file: Path, *, neutralize_added: bool) -> str:
+    stat = cfg_file.stat()
+    resolved = cfg_file.resolve()
+    return (
+        f"editor:{resolved}:{stat.st_mtime_ns}:{stat.st_size}:"
+        f"{1 if neutralize_added else 0}"
+    )
+
+
+def _is_fast_optimize_editor_config(raw_cfg: dict) -> bool:
+    if not isinstance(raw_cfg, dict):
+        return False
+    return all(isinstance(raw_cfg.get(key), dict) for key in ("backtest", "bot", "live", "optimize"))
+
+
 def _get_new_optimize_template() -> dict:
     try:
         tmpl = get_template_config()
@@ -235,31 +252,45 @@ def _load_editor_payload_from_config_path(cfg_file: Path, *, name: str | None = 
     if not cfg_file.exists():
         raise HTTPException(404, f"Config not found: {cfg_file}")
     try:
+        cache_key = _optimize_editor_cache_key(cfg_file, neutralize_added=True)
+        cached = _api_cache_get(cache_key, _EDITOR_CACHE_TTL)
+        if cached is not None:
+            return cached
         raw_cfg = None
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 raw_cfg = json.load(f)
         except (OSError, json.JSONDecodeError):
             raw_cfg = None
-        try:
-            cfg = load_pb7_config(cfg_file, neutralize_added=True)
-        except Exception as exc:
-            if not isinstance(raw_cfg, dict):
-                raise
-            merged_cfg = _merge_nested_dicts(_get_new_optimize_template(), raw_cfg)
-            cfg = prepare_pb7_config_dict(
-                merged_cfg,
-                neutralize_added=True,
-                base_config_path=str(cfg_file),
-            )
-            _log(
-                SERVICE,
-                f"Loaded optimize config '{cfg_file}' via template merge fallback after {exc}",
-                level="INFO",
-            )
+        if _is_fast_optimize_editor_config(raw_cfg):
+            cfg = copy.deepcopy(raw_cfg)
+            if isinstance(cfg, dict):
+                cfg.pop("_pbgui_param_status", None)
+        else:
+            try:
+                cfg = load_pb7_config(cfg_file, neutralize_added=True)
+            except Exception as exc:
+                if not isinstance(raw_cfg, dict):
+                    raise
+                merged_cfg = _merge_nested_dicts(_get_new_optimize_template(), raw_cfg)
+                cfg = prepare_pb7_config_dict(
+                    merged_cfg,
+                    neutralize_added=True,
+                    base_config_path=str(cfg_file),
+                )
+                _log(
+                    SERVICE,
+                    f"Loaded optimize config '{cfg_file}' via template merge fallback after {exc}",
+                    level="INFO",
+                )
         cfg = _restore_optimize_editor_backend_semantics(cfg, raw_cfg)
         payload_name = name if name is not None else cfg_file.stem
-        return _editor_config_payload(cfg, name=payload_name, backend_hint=_infer_optimize_backend_hint(raw_cfg))
+        payload = _editor_config_payload(
+            cfg,
+            name=payload_name,
+            backend_hint=_infer_optimize_backend_hint(raw_cfg),
+        )
+        return _api_cache_set(cache_key, payload)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1086,6 +1117,12 @@ def _build_optimize_runtime_status(item: dict) -> dict:
 def _load_pareto_json(path: Path) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _pareto_file_cache_key(path: Path) -> str:
+    stat = path.stat()
+    resolved = path.resolve()
+    return f"pareto-file:{resolved}:{stat.st_mtime_ns}:{stat.st_size}"
 
 
 def _coerce_metric_float(value) -> Optional[float]:
@@ -2370,7 +2407,7 @@ def save_config(name: str, body: dict, source_name: str | None = None,
         cfg["optimize"] = optimize
     cfg_file = _opt_configs_dir() / f"{name}.json"
     save_pb7_config(cfg, cfg_file)
-    _api_cache_clear("configs", "queue")
+    _api_cache_clear("configs", "queue", "editor:")
     _update_queue_config_references(
         [cfg_file],
         target_path=cfg_file,
@@ -2387,7 +2424,7 @@ def delete_config(name: str, session: SessionToken = Depends(require_auth)):
     if not cfg_file.exists():
         raise HTTPException(404, f"Config '{name}' not found")
     cfg_file.unlink(missing_ok=True)
-    _api_cache_clear("configs", "queue")
+    _api_cache_clear("configs", "queue", "editor:")
     return {"ok": True}
 
 
@@ -2405,7 +2442,7 @@ def duplicate_config(name: str, body: dict, session: SessionToken = Depends(requ
     cfg = load_pb7_config(src, neutralize_added=True)
     cfg.setdefault("backtest", {})["base_dir"] = f"backtests/pbgui/{new_name}"
     save_pb7_config(cfg, dst)
-    _api_cache_clear("configs")
+    _api_cache_clear("configs", "editor:")
     return {"ok": True, "name": new_name}
 
 
@@ -2752,9 +2789,14 @@ def get_result_config(path: str, session: SessionToken = Depends(require_auth)):
     if not first_pareto:
         raise HTTPException(404, "No pareto config found for result")
     try:
+        cache_key = f"result-config:{first_pareto.resolve()}:{first_pareto.stat().st_mtime_ns}:{first_pareto.stat().st_size}"
+        cached = _api_cache_get(cache_key, _PARETO_FILE_CACHE_TTL)
+        if cached is not None:
+            return cached
         data = _load_pareto_json(first_pareto)
         cfg = _extract_config_from_pareto_data(data)
-        return _editor_config_payload(cfg, backend_hint=_infer_optimize_backend_hint(cfg))
+        payload = _editor_config_payload(cfg, backend_hint=_infer_optimize_backend_hint(cfg))
+        return _api_cache_set(cache_key, payload)
     except Exception as exc:
         raise HTTPException(500, f"Error reading pareto config: {exc}") from exc
 
@@ -2954,7 +2996,15 @@ def get_pareto_file(path: str, session: SessionToken = Depends(require_auth)):
     pareto_path = _ensure_pareto_path(path)
     if not pareto_path.exists():
         raise HTTPException(404, "Pareto file not found")
-    return _load_pareto_json(pareto_path)
+    try:
+        cache_key = _pareto_file_cache_key(pareto_path)
+        cached = _api_cache_get(cache_key, _PARETO_FILE_CACHE_TTL)
+        if cached is not None:
+            return cached
+        data = _load_pareto_json(pareto_path)
+        return _api_cache_set(cache_key, data)
+    except Exception as exc:
+        raise HTTPException(500, f"Error reading pareto file: {exc}") from exc
 
 
 @router.post("/paretos/seed-bundle")

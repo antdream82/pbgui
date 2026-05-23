@@ -9386,12 +9386,34 @@ function openEditorWithConfig(configOrPayload, name, sourceName) {
   showStructuredEditor(payload.config, name, sourceName, payload.param_status, payload.backend_hint);
 }
 
+function showOptimizeEditorLoading(name, sourceName, message) {
+  closeAllModals();
+  state.editorSourceName = sourceName || '';
+  state.editorDraftName = name || '';
+  state.editingConfig = name || '';
+  state.editorBackendHint = '';
+  state.editorLastConfig = null;
+  setOptBotParamStatus({});
+  var editor = el('configs-editor');
+  editor.innerHTML = '<div class="empty-state"><strong>' + escapeHtml(message || 'Loading config...') + '</strong>'
+    + '<span class="muted">' + escapeHtml(name || sourceName || '') + '</span></div>';
+  el('configs-toolbar').style.display = 'none';
+  el('configs-list-wrap').style.display = 'none';
+  editor.style.display = 'block';
+  el('sidebar-inner').style.display = 'none';
+  el('sidebar-editor').style.display = '';
+  setPanel('configs');
+  setPageEditorStatus(message || 'Loading config...', '');
+}
+
 async function openNewConfig() {
+  showOptimizeEditorLoading('', '', 'Loading new config template...');
   var data = await apiFetch('/configs/new-config');
   openEditorWithConfig(data, '', '');
 }
 
 async function openConfigEditor(name) {
+  showOptimizeEditorLoading(name, name, 'Loading config...');
   var data = await apiFetch('/configs/' + encodeURIComponent(name));
   openEditorWithConfig(data, name, name);
 }
@@ -9454,6 +9476,7 @@ async function openConfigFromQueueChoice(name) {
   var configName = String(name || '').trim();
   if (!configName) return;
   closeAllModals();
+  showOptimizeEditorLoading(configName, configName, 'Loading config...');
   await openConfigEditor(configName);
   setPageEditorStatus('Opened matching config. Save or queue it again to refresh the old queue entry.', 'ok');
 }
@@ -9490,6 +9513,7 @@ async function repairQueueItemFromQueueChoice(name) {
 
 async function openQueueConfigEditor(filename) {
   try {
+    showOptimizeEditorLoading(filename, filename, 'Loading queued config...');
     var data = await apiFetch('/queue/' + encodeURIComponent(filename) + '/config');
     var configName = data && data.name ? String(data.name) : '';
     openEditorWithConfig(data, configName, configName);
@@ -9503,6 +9527,7 @@ async function openQueueConfigEditor(filename) {
 }
 
 async function openResultConfig(path, suggestedName) {
+  showOptimizeEditorLoading(suggestedName || '', suggestedName || '', 'Loading result config...');
   var config = await apiFetch('/results/config?path=' + encodeURIComponent(path));
   openEditorWithConfig(config, suggestedName || '', '');
 }
