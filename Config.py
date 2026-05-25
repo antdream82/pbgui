@@ -29,6 +29,7 @@ METRIC_GROUP_ORDER = [
     "Risk Metrics",
     "Ratios & Efficiency",
     "Position & Execution Metrics",
+    "Exposure Metrics",
     "Equity Curve Quality",
     "Other",
 ]
@@ -40,6 +41,7 @@ METRIC_GROUP_DESCRIPTIONS: dict[str, str] = {
     "Risk Metrics": "Risk and downside metrics (drawdowns, expected shortfall, equity/balance divergence).",
     "Ratios & Efficiency": "Risk-adjusted and efficiency ratios (Sharpe/Sortino/Omega/Calmar/Sterling, loss-profit).",
     "Position & Execution Metrics": "Trading activity and holding/execution characteristics (positions/day, hold times, volume, recovery).",
+    "Exposure Metrics": "Realized exposure and high-exposure duration metrics.",
     "Equity Curve Quality": "Equity curve smoothness/fit quality (choppiness, jerkiness, exponential fit error).",
     "Other": "Miscellaneous metrics.",
 }
@@ -139,6 +141,57 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=True,
         description="Gain normalized by short exposure limit.",
     ),
+    "adg_per_actual_exposure": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="adg_w_per_actual_exposure",
+        description="ADG normalized by realized mean total wallet exposure.",
+    ),
+    "mdg_per_actual_exposure": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="mdg_w_per_actual_exposure",
+        description="MDG normalized by realized mean total wallet exposure.",
+    ),
+    "gain_per_actual_exposure": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        description="Gain normalized by realized mean total wallet exposure.",
+    ),
+    "adg_per_actual_exposure_long": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="adg_w_per_actual_exposure_long",
+        description="ADG normalized by realized mean long wallet exposure.",
+    ),
+    "adg_per_actual_exposure_short": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="adg_w_per_actual_exposure_short",
+        description="ADG normalized by realized mean short wallet exposure.",
+    ),
+    "mdg_per_actual_exposure_long": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="mdg_w_per_actual_exposure_long",
+        description="MDG normalized by realized mean long wallet exposure.",
+    ),
+    "mdg_per_actual_exposure_short": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        weighted_variant="mdg_w_per_actual_exposure_short",
+        description="MDG normalized by realized mean short wallet exposure.",
+    ),
+    "gain_per_actual_exposure_long": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        description="Gain normalized by realized mean long wallet exposure.",
+    ),
+    "gain_per_actual_exposure_short": MetricDef(
+        group="Returns & Growth",
+        has_currency=True,
+        description="Gain normalized by realized mean short wallet exposure.",
+    ),
 
     # Risk Metrics
     "drawdown_worst": MetricDef(
@@ -150,6 +203,11 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         group="Risk Metrics",
         has_currency=True,
         description="Mean of worst 1% daily drawdowns.",
+    ),
+    "ulcer_index": MetricDef(
+        group="Risk Metrics",
+        has_currency=True,
+        description="Root-mean-square drawdown from the running equity peak.",
     ),
     "expected_shortfall_1pct": MetricDef(
         group="Risk Metrics",
@@ -267,6 +325,16 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=True,
         weighted_variant="calmar_ratio_w",
         description="Return divided by maximum drawdown (plus weighted variant).",
+    ),
+    "adg_over_ui": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=False,
+        description="ADG divided by ulcer index.",
+    ),
+    "gain_over_ui": MetricDef(
+        group="Ratios & Efficiency",
+        has_currency=True,
+        description="Gain divided by ulcer index.",
     ),
     "loss_profit_ratio": MetricDef(
         group="Ratios & Efficiency",
@@ -497,6 +565,41 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         has_currency=False,
         description="Maximum consecutive hours with short position above high exposure threshold.",
     ),
+    "total_wallet_exposure_mean": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Average total wallet exposure over the run.",
+    ),
+    "wallet_exposure_mean_long": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Average realized long wallet exposure over the run.",
+    ),
+    "wallet_exposure_median_long": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Median realized long wallet exposure over the run.",
+    ),
+    "wallet_exposure_max_long": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Maximum realized long wallet exposure over the run.",
+    ),
+    "wallet_exposure_mean_short": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Average realized short wallet exposure over the run.",
+    ),
+    "wallet_exposure_median_short": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Median realized short wallet exposure over the run.",
+    ),
+    "wallet_exposure_max_short": MetricDef(
+        group="Exposure Metrics",
+        has_currency=False,
+        description="Maximum realized short wallet exposure over the run.",
+    ),
 }
 
 
@@ -694,14 +797,17 @@ def get_aggregate_metrics():
     """Get list of metrics commonly used for suite aggregation (with currency suffixes)."""
     metrics = []
     # Add currency metrics with both suffixes
-    for m in ["adg", "adg_w", "mdg", "mdg_w", "drawdown_worst", "drawdown_worst_mean_1pct", "gain"]:
+    for m in ["adg", "adg_w", "mdg", "mdg_w", "drawdown_worst", "drawdown_worst_mean_1pct", "gain", "ulcer_index", "gain_over_ui"]:
         if m in CURRENCY_METRICS:
             metrics.extend([f"{m}_usd", f"{m}_btc"])
     # Add shared metrics that don't need suffixes
     for m in ["sharpe_ratio", "sharpe_ratio_w", "sortino_ratio", "sortino_ratio_w", 
               "loss_profit_ratio", "loss_profit_ratio_w", "positions_held_per_day",
               "position_held_hours_max", "position_held_hours_mean", "position_held_hours_median",
-              "position_unchanged_hours_max", "peak_recovery_hours_pnl"]:
+              "position_unchanged_hours_max", "peak_recovery_hours_pnl", "adg_over_ui",
+              "total_wallet_exposure_mean", "wallet_exposure_mean_long", "wallet_exposure_median_long",
+              "wallet_exposure_max_long", "wallet_exposure_mean_short", "wallet_exposure_median_short",
+              "wallet_exposure_max_short"]:
         if m in SHARED_METRICS:
             metrics.append(m)
     # Add ratio metrics with currency suffixes
@@ -797,9 +903,16 @@ DEFAULT_OBJECTIVE_GOALS: dict[str, str] = {
     "sortino_ratio_pnl": "max",
     "sortino_ratio_pnl_w": "max",
     "adg": "max",
+    "adg_over_ui": "max",
+    "adg_per_actual_exposure": "max",
+    "adg_per_actual_exposure_long": "max",
+    "adg_per_actual_exposure_short": "max",
     "adg_per_exposure_long": "max",
     "adg_per_exposure_short": "max",
     "adg_w": "max",
+    "adg_w_per_actual_exposure": "max",
+    "adg_w_per_actual_exposure_long": "max",
+    "adg_w_per_actual_exposure_short": "max",
     "adg_w_per_exposure_long": "max",
     "adg_w_per_exposure_short": "max",
     "calmar_ratio": "max",
@@ -823,14 +936,24 @@ DEFAULT_OBJECTIVE_GOALS: dict[str, str] = {
     "exponential_fit_error": "min",
     "exponential_fit_error_w": "min",
     "gain": "max",
+    "gain_over_ui": "max",
+    "gain_per_actual_exposure": "max",
+    "gain_per_actual_exposure_long": "max",
+    "gain_per_actual_exposure_short": "max",
     "gain_per_exposure_long": "max",
     "gain_per_exposure_short": "max",
     "loss_profit_ratio": "min",
     "loss_profit_ratio_w": "min",
     "mdg": "max",
+    "mdg_per_actual_exposure": "max",
+    "mdg_per_actual_exposure_long": "max",
+    "mdg_per_actual_exposure_short": "max",
     "mdg_per_exposure_long": "max",
     "mdg_per_exposure_short": "max",
     "mdg_w": "max",
+    "mdg_w_per_actual_exposure": "max",
+    "mdg_w_per_actual_exposure_long": "max",
+    "mdg_w_per_actual_exposure_short": "max",
     "mdg_w_per_exposure_long": "max",
     "mdg_w_per_exposure_short": "max",
     "omega_ratio": "max",
@@ -841,6 +964,7 @@ DEFAULT_OBJECTIVE_GOALS: dict[str, str] = {
     "sortino_ratio_w": "max",
     "sterling_ratio": "max",
     "sterling_ratio_w": "max",
+    "ulcer_index": "min",
     "paper_loss_ratio_w": "max",
     "paper_loss_mean_ratio_w": "max",
     "exposure_ratio_w": "max",
@@ -848,6 +972,12 @@ DEFAULT_OBJECTIVE_GOALS: dict[str, str] = {
     "total_wallet_exposure_max": "min",
     "total_wallet_exposure_mean": "min",
     "total_wallet_exposure_median": "min",
+    "wallet_exposure_mean_long": "min",
+    "wallet_exposure_median_long": "min",
+    "wallet_exposure_max_long": "min",
+    "wallet_exposure_mean_short": "min",
+    "wallet_exposure_median_short": "min",
+    "wallet_exposure_max_short": "min",
     "volume_pct_per_day_avg": "max",
     "volume_pct_per_day_avg_w": "max",
     "entry_initial_balance_pct_long": "max",
@@ -3709,14 +3839,14 @@ class Bounds:
     CLOSE_TRAILING_THRESHOLD_PCT_WIDGET_STEP = 0.00001
 
     EMA_SPAN_0_MIN = 1.0
-    EMA_SPAN_0_MAX = 10000.0
+    EMA_SPAN_0_MAX = 20000.0
     EMA_SPAN_0_STEP = 1.0
     EMA_SPAN_0_ROUND = 1
     EMA_SPAN_0_FORMAT = f'%.{EMA_SPAN_0_ROUND}f'
     EMA_SPAN_0_WIDGET_STEP = 1.0
 
     EMA_SPAN_1_MIN = 1.0
-    EMA_SPAN_1_MAX = 10000.0
+    EMA_SPAN_1_MAX = 20000.0
     EMA_SPAN_1_STEP = 1.0
     EMA_SPAN_1_ROUND = 1
     EMA_SPAN_1_FORMAT = f'%.{EMA_SPAN_1_ROUND}f'

@@ -19,6 +19,7 @@ _OPTIMIZE_METRIC_GROUP_ORDER = (
     "Risk Metrics",
     "Ratios & Efficiency",
     "Position & Execution Metrics",
+    "Exposure Metrics",
     "Equity Curve Quality",
     "Other",
 )
@@ -28,6 +29,7 @@ _OPTIMIZE_METRIC_GROUP_DESCRIPTIONS = {
     "Risk Metrics": "Drawdown, shortfall, divergence, trade-loss, and hard-stop risk metrics.",
     "Ratios & Efficiency": "Risk-adjusted and efficiency ratios such as Sharpe, Sortino, Omega, Calmar, Sterling, exposure and win-rate metrics.",
     "Position & Execution Metrics": "Holding-time, activity, recovery, high-exposure, hard-stop timeline, and completion metrics across hour/day variants.",
+    "Exposure Metrics": "Realized wallet exposure and side-level exposure summary metrics.",
     "Equity Curve Quality": "Equity smoothness and fit-quality metrics.",
     "Other": "Miscellaneous metrics.",
 }
@@ -112,7 +114,16 @@ def _group_optimize_metric(metric: str) -> str:
     if (
         base in {"gain", "gain_strategy_eq", "gain_strategy_pnl_rebased"}
         or base.startswith(("adg", "mdg"))
-        or base.startswith(("gain_per_exposure_", "adg_per_exposure_", "mdg_per_exposure_"))
+        or base.startswith(
+            (
+                "gain_per_exposure_",
+                "adg_per_exposure_",
+                "mdg_per_exposure_",
+                "gain_per_actual_exposure",
+                "adg_per_actual_exposure",
+                "mdg_per_actual_exposure",
+            )
+        )
     ):
         return "Returns & Growth"
 
@@ -140,9 +151,14 @@ def _group_optimize_metric(metric: str) -> str:
             "exposure_ratio",
             "exposure_mean_ratio",
             "win_rate",
+            "gain_over_ui",
+            "adg_over_ui",
         )
     ):
         return "Ratios & Efficiency"
+
+    if base == "ulcer_index":
+        return "Risk Metrics"
 
     if base.startswith(
         (
@@ -166,6 +182,9 @@ def _group_optimize_metric(metric: str) -> str:
         )
     ):
         return "Position & Execution Metrics"
+
+    if base.startswith(("wallet_exposure_", "total_wallet_exposure_")):
+        return "Exposure Metrics"
 
     if base.startswith(("equity_choppiness", "equity_jerkiness", "exponential_fit_error")):
         return "Equity Curve Quality"
@@ -255,6 +274,7 @@ def get_optimize_limits_meta_payload() -> dict[str, Any]:
         "currency_help": pbgui_help.limit_currency,
         "penalize_help": pbgui_help.limits_penalize_if,
         "stat_help": pbgui_help.limits_stat,
+        "scenario_help": "Optional suite scenario label. When set, PB7 evaluates this limit against that scenario value directly and omits stat.",
         "goal_help": "PB7 stores optimize.scoring as explicit {metric, goal} objects. Known metrics prefill Passivbot's default min/max goal; metrics without a PB7 default should be checked explicitly.",
         "value_help": pbgui_help.limit_value,
         "range_low_help": pbgui_help.limit_range_low,

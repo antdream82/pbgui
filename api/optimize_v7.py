@@ -63,9 +63,13 @@ _RESULT_SUMMARY_FIELDS = (
     ("gain", ("gain_usd", "gain")),
     ("drawdown_worst", ("drawdown_worst_usd", "drawdown_worst")),
     ("sharpe_ratio", ("sharpe_ratio_usd", "sharpe_ratio")),
+    ("gain_over_ui", ("gain_over_ui_usd", "gain_over_ui")),
+    ("ulcer_index", ("ulcer_index_usd", "ulcer_index")),
     ("loss_profit_ratio", ("loss_profit_ratio",)),
     ("sortino_ratio", ("sortino_ratio_usd", "sortino_ratio")),
     ("omega_ratio", ("omega_ratio_usd", "omega_ratio")),
+    ("wallet_exposure_mean_long", ("wallet_exposure_mean_long",)),
+    ("wallet_exposure_mean_short", ("wallet_exposure_mean_short",)),
     (
         "equity_balance_diff_neg_max",
         ("equity_balance_diff_neg_max_usd", "equity_balance_diff_neg_max"),
@@ -109,6 +113,49 @@ _PARETO_DASH_PROXY_REQ_DROP = {"host", "content-length", "connection"}
 _PARETO_DASH_PROXY_RESP_DROP = {"content-length", "connection", "transfer-encoding", "content-encoding"}
 _pareto_dash_sessions: dict[str, dict] = {}
 _pareto_dash_lock = threading.RLock()
+_API_LIST_CACHE: dict[str, tuple[float, object]] = {}
+_API_LIST_CACHE_LOCK = threading.RLock()
+_EDITOR_CACHE_TTL = 120.0
+_CONFIGS_CACHE_TTL = 10.0
+_RESULTS_CACHE_TTL = 10.0
+_QUEUE_CACHE_TTL = 1.0
+_RESULT_META_CACHE_TTL = 3600.0
+_PARETO_FILE_CACHE_TTL = 300.0
+
+
+def _api_cache_get(key: str, ttl: float):
+    now = time.monotonic()
+    with _API_LIST_CACHE_LOCK:
+        cached = _API_LIST_CACHE.get(key)
+        if not cached:
+            return None
+        created, value = cached
+        if now - created > ttl:
+            _API_LIST_CACHE.pop(key, None)
+            return None
+        return copy.deepcopy(value)
+
+
+def _api_cache_set(key: str, value):
+    with _API_LIST_CACHE_LOCK:
+        _API_LIST_CACHE[key] = (time.monotonic(), copy.deepcopy(value))
+    return value
+
+
+def _api_cache_clear(*prefixes: str) -> None:
+    with _API_LIST_CACHE_LOCK:
+        if not prefixes:
+            _API_LIST_CACHE.clear()
+            return
+        for key in list(_API_LIST_CACHE):
+            if any(key.startswith(prefix) for prefix in prefixes):
+                _API_LIST_CACHE.pop(key, None)
+
+
+def _load_json_file(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data if isinstance(data, dict) else {}
 
 
 def _validate_name(name: str) -> None:
@@ -169,6 +216,21 @@ def _merge_nested_dicts(base: dict, overlay: dict) -> dict:
     return merged
 
 
+def _optimize_editor_cache_key(cfg_file: Path, *, neutralize_added: bool) -> str:
+    stat = cfg_file.stat()
+    resolved = cfg_file.resolve()
+    return (
+        f"editor:{resolved}:{stat.st_mtime_ns}:{stat.st_size}:"
+        f"{1 if neutralize_added else 0}"
+    )
+
+
+def _is_fast_optimize_editor_config(raw_cfg: dict) -> bool:
+    if not isinstance(raw_cfg, dict):
+        return False
+    return all(isinstance(raw_cfg.get(key), dict) for key in ("backtest", "bot", "live", "optimize"))
+
+
 def _get_new_optimize_template() -> dict:
     try:
         tmpl = get_template_config()
@@ -190,31 +252,45 @@ def _load_editor_payload_from_config_path(cfg_file: Path, *, name: str | None = 
     if not cfg_file.exists():
         raise HTTPException(404, f"Config not found: {cfg_file}")
     try:
+        cache_key = _optimize_editor_cache_key(cfg_file, neutralize_added=True)
+        cached = _api_cache_get(cache_key, _EDITOR_CACHE_TTL)
+        if cached is not None:
+            return cached
         raw_cfg = None
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 raw_cfg = json.load(f)
         except (OSError, json.JSONDecodeError):
             raw_cfg = None
-        try:
-            cfg = load_pb7_config(cfg_file, neutralize_added=True)
-        except Exception as exc:
-            if not isinstance(raw_cfg, dict):
-                raise
-            merged_cfg = _merge_nested_dicts(_get_new_optimize_template(), raw_cfg)
-            cfg = prepare_pb7_config_dict(
-                merged_cfg,
-                neutralize_added=True,
-                base_config_path=str(cfg_file),
-            )
-            _log(
-                SERVICE,
-                f"Loaded optimize config '{cfg_file}' via template merge fallback after {exc}",
-                level="INFO",
-            )
+        if _is_fast_optimize_editor_config(raw_cfg):
+            cfg = copy.deepcopy(raw_cfg)
+            if isinstance(cfg, dict):
+                cfg.pop("_pbgui_param_status", None)
+        else:
+            try:
+                cfg = load_pb7_config(cfg_file, neutralize_added=True)
+            except Exception as exc:
+                if not isinstance(raw_cfg, dict):
+                    raise
+                merged_cfg = _merge_nested_dicts(_get_new_optimize_template(), raw_cfg)
+                cfg = prepare_pb7_config_dict(
+                    merged_cfg,
+                    neutralize_added=True,
+                    base_config_path=str(cfg_file),
+                )
+                _log(
+                    SERVICE,
+                    f"Loaded optimize config '{cfg_file}' via template merge fallback after {exc}",
+                    level="INFO",
+                )
         cfg = _restore_optimize_editor_backend_semantics(cfg, raw_cfg)
         payload_name = name if name is not None else cfg_file.stem
-        return _editor_config_payload(cfg, name=payload_name, backend_hint=_infer_optimize_backend_hint(raw_cfg))
+        payload = _editor_config_payload(
+            cfg,
+            name=payload_name,
+            backend_hint=_infer_optimize_backend_hint(raw_cfg),
+        )
+        return _api_cache_set(cache_key, payload)
     except HTTPException:
         raise
     except Exception as exc:
@@ -960,9 +1036,24 @@ def _build_optimize_runtime_status(item: dict) -> dict:
 
     eval_count = log_summary.get("eval") or log_summary.get("iter")
     target_iters = config_meta.get("iters")
+    starting_configs_total = log_summary.get("starting_configs_total")
+    if starting_configs_total is None:
+        starting_configs_total = log_summary.get("starting_configs_loaded")
+    target_total_evals = None
+    if isinstance(target_iters, int) and target_iters > 0:
+        target_total_evals = target_iters
+        if isinstance(starting_configs_total, int) and starting_configs_total > 0:
+            target_total_evals += starting_configs_total
+    elif isinstance(starting_configs_total, int) and starting_configs_total > 0:
+        target_total_evals = starting_configs_total
+    progress_done = eval_count
+    if not isinstance(progress_done, int) and isinstance(log_summary.get("starting_configs_done"), int):
+        progress_done = int(log_summary["starting_configs_done"])
     progress_pct = None
-    if isinstance(eval_count, int) and isinstance(target_iters, int) and target_iters > 0:
-        progress_pct = max(0.0, min(100.0, (eval_count / target_iters) * 100.0))
+    if isinstance(progress_done, int) and isinstance(target_total_evals, int) and target_total_evals > 0:
+        progress_pct = max(0.0, min(100.0, (progress_done / target_total_evals) * 100.0))
+    elif isinstance(progress_done, int) and isinstance(target_iters, int) and target_iters > 0:
+        progress_pct = max(0.0, min(100.0, (progress_done / target_iters) * 100.0))
 
     process_stats = _collect_optimize_process_stats(item.get("pid"))
     system_stats = _collect_optimize_system_stats()
@@ -1001,15 +1092,17 @@ def _build_optimize_runtime_status(item: dict) -> dict:
         "phase": phase,
         "progress": {
             "eval": eval_count,
+            "done": progress_done,
             "iter": log_summary.get("iter"),
             "target_iters": target_iters,
+            "target_total_evals": target_total_evals,
             "percent": progress_pct,
             "front": log_summary.get("front"),
             "pareto_added": log_summary.get("pareto_added"),
             "pareto_removed": log_summary.get("pareto_removed"),
             "starting_configs_loaded": log_summary.get("starting_configs_loaded"),
             "starting_configs_done": log_summary.get("starting_configs_done"),
-            "starting_configs_total": log_summary.get("starting_configs_total"),
+            "starting_configs_total": starting_configs_total,
             "population_size": log_summary.get("population_size"),
         },
         "runtime": {
@@ -1043,6 +1136,12 @@ def _load_pareto_json(path: Path) -> dict:
         return json.load(f)
 
 
+def _pareto_file_cache_key(path: Path) -> str:
+    stat = path.stat()
+    resolved = path.resolve()
+    return f"pareto-file:{resolved}:{stat.st_mtime_ns}:{stat.st_size}"
+
+
 def _coerce_metric_float(value) -> Optional[float]:
     try:
         if value in (None, ""):
@@ -1062,6 +1161,49 @@ def _result_name_from_data(data: dict, fallback_name: str) -> str:
     if base_dir:
         return PurePath(base_dir).name
     return fallback_name
+
+
+def _result_list_meta(first_pareto: Path | None, fallback_name: str, pareto_count: int) -> dict:
+    if not first_pareto:
+        return {"name": fallback_name, "mode": "unknown", "scenario_count": 0}
+    try:
+        stat = first_pareto.stat()
+    except OSError:
+        return {"name": fallback_name, "mode": "unknown", "scenario_count": 0}
+    cache_key = f"result-meta:{first_pareto}:{stat.st_mtime_ns}:{stat.st_size}:{pareto_count}"
+    cached = _api_cache_get(cache_key, _RESULT_META_CACHE_TTL)
+    if cached is not None:
+        return cached
+    meta = {"name": fallback_name, "mode": "unknown", "scenario_count": 0}
+    try:
+        first_data = _load_pareto_json(first_pareto)
+        mode, scenario_labels = _detect_pareto_mode(first_data)
+        meta = {
+            "name": _result_name_from_data(first_data, fallback_name),
+            "mode": mode,
+            "scenario_count": len(scenario_labels),
+        }
+    except Exception:
+        pass
+    return _api_cache_set(cache_key, meta)
+
+
+def _scan_pareto_dir_for_listing(pareto_dir: Path) -> tuple[int, Path | None]:
+    if not pareto_dir.exists():
+        return 0, None
+    count = 0
+    first_path = None
+    try:
+        with os.scandir(pareto_dir) as entries:
+            for entry in entries:
+                if not entry.is_file() or not entry.name.endswith(".json"):
+                    continue
+                count += 1
+                if first_path is None:
+                    first_path = Path(entry.path)
+    except OSError:
+        return 0, None
+    return count, first_path
 
 
 def _detect_pareto_mode(data: dict) -> tuple[str, list[str]]:
@@ -2255,12 +2397,15 @@ def prepare_config_for_editor(body: dict, session: SessionToken = Depends(requir
 
 @router.get("/configs")
 def list_configs(session: SessionToken = Depends(require_auth)):
+    cached = _api_cache_get("configs:list", _CONFIGS_CACHE_TTL)
+    if cached is not None:
+        return cached
     configs = []
     base = _opt_configs_dir()
     if base.exists():
         for cfg_file in sorted(base.glob("*.json")):
             try:
-                cfg = load_pb7_config(cfg_file, neutralize_added=True)
+                cfg = _load_json_file(cfg_file)
                 name = cfg_file.stem
                 backtests_dir = Path(pb7dir()) / "backtests" / "pbgui" / name
                 backtest_count = len(list(backtests_dir.glob("**/analysis.json"))) if backtests_dir.exists() else 0
@@ -2281,7 +2426,7 @@ def list_configs(session: SessionToken = Depends(require_auth)):
                 )
             except Exception as exc:
                 _log(SERVICE, f"Error reading optimize config {cfg_file}: {exc}", level="WARNING")
-    return {"configs": configs}
+    return _api_cache_set("configs:list", {"configs": configs})
 
 
 @router.get("/configs/{name}")
@@ -2311,6 +2456,7 @@ def save_config(name: str, body: dict, source_name: str | None = None,
         cfg["optimize"] = optimize
     cfg_file = _opt_configs_dir() / f"{name}.json"
     save_pb7_config(cfg, cfg_file)
+    _api_cache_clear("configs", "queue", "editor:")
     _update_queue_config_references(
         [cfg_file],
         target_path=cfg_file,
@@ -2327,6 +2473,7 @@ def delete_config(name: str, session: SessionToken = Depends(require_auth)):
     if not cfg_file.exists():
         raise HTTPException(404, f"Config '{name}' not found")
     cfg_file.unlink(missing_ok=True)
+    _api_cache_clear("configs", "queue", "editor:")
     return {"ok": True}
 
 
@@ -2344,6 +2491,7 @@ def duplicate_config(name: str, body: dict, session: SessionToken = Depends(requ
     cfg = load_pb7_config(src, neutralize_added=True)
     cfg.setdefault("backtest", {})["base_dir"] = f"backtests/pbgui/{new_name}"
     save_pb7_config(cfg, dst)
+    _api_cache_clear("configs", "editor:")
     return {"ok": True, "name": new_name}
 
 
@@ -2388,7 +2536,10 @@ def _load_queue_sync() -> list[dict]:
 
 @router.get("/queue")
 def get_queue(session: SessionToken = Depends(require_auth)):
-    return {"items": _load_queue_sync()}
+    cached = _api_cache_get("queue:list", _QUEUE_CACHE_TTL)
+    if cached is not None:
+        return cached
+    return _api_cache_set("queue:list", {"items": _load_queue_sync()})
 
 
 @router.post("/queue/reorder")
@@ -2432,6 +2583,7 @@ def reorder_queue(body: dict, session: SessionToken = Depends(require_auth)):
             json.dump(updated, f, indent=4)
             f.write("\n")
 
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True, "count": len(normalized)}
 
@@ -2449,6 +2601,7 @@ def add_to_queue(body: dict, session: SessionToken = Depends(require_auth)):
         cfg = dict(config)
         cfg.setdefault("backtest", {})["base_dir"] = f"backtests/pbgui/{name}"
         save_pb7_config(cfg, cfg_file)
+        _api_cache_clear("configs")
     if not cfg_file.exists():
         raise HTTPException(404, f"Config '{name}' not found")
 
@@ -2473,6 +2626,7 @@ def add_to_queue(body: dict, session: SessionToken = Depends(require_auth)):
         json.dump(queue_data, f, indent=4)
         f.write("\n")
 
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True, "filename": filename}
 
@@ -2483,6 +2637,7 @@ def start_queue_item(filename: str, session: SessionToken = Depends(require_auth
     data = _read_queue_item_data(filename)
     item = _queue_launch_item_from_data(filename, data)
     _worker._launch_optimize(item)
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True}
 
@@ -2516,6 +2671,7 @@ def requeue_queue_item(filename: str, session: SessionToken = Depends(require_au
     (_opt_log_dir() / f"{filename}.log").unlink(missing_ok=True)
     (_opt_queue_dir() / f"{filename}.log").unlink(missing_ok=True)
 
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True}
 
@@ -2565,6 +2721,7 @@ def stop_queue_item(filename: str, session: SessionToken = Depends(require_auth)
     )
     if refreshed_pid is None:
         _store._write_pid(filename, None)
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True}
 
@@ -2585,6 +2742,7 @@ def repair_queue_item_config(filename: str, body: dict, session: SessionToken = 
     _validate_name(target_name)
     data = _read_queue_item_data(filename)
     repaired = _repair_queue_item_config_reference(filename, data, target_name)
+    _api_cache_clear("queue")
     _store.notify()
     return {
         "ok": True,
@@ -2602,6 +2760,7 @@ def remove_queue_item(filename: str, session: SessionToken = Depends(require_aut
     (_opt_queue_dir() / f"{filename}.pid").unlink(missing_ok=True)
     (_opt_log_dir() / f"{filename}.log").unlink(missing_ok=True)
     (_opt_queue_dir() / f"{filename}.log").unlink(missing_ok=True)
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True}
 
@@ -2617,6 +2776,7 @@ def clear_finished(session: SessionToken = Depends(require_auth)):
             (_opt_log_dir() / f"{filename}.log").unlink(missing_ok=True)
             (_opt_queue_dir() / f"{filename}.log").unlink(missing_ok=True)
             removed += 1
+    _api_cache_clear("queue")
     _store.notify()
     return {"ok": True, "removed": removed}
 
@@ -2644,37 +2804,32 @@ def get_queue_status(filename: str, session: SessionToken = Depends(require_auth
 
 @router.get("/results")
 def list_results(session: SessionToken = Depends(require_auth)):
+    cached = _api_cache_get("results:list", _RESULTS_CACHE_TTL)
+    if cached is not None:
+        return cached
     base = _opt_results_base()
     if not base.exists():
         return {"results": []}
     results = []
     for result_dir in _iter_result_dirs(base):
+        all_results = result_dir / "all_results.bin"
         pareto_dir = result_dir / "pareto"
-        pareto_files = sorted(pareto_dir.glob("*.json")) if pareto_dir.exists() else []
-        first_pareto = pareto_files[0] if pareto_files else None
+        pareto_count, first_pareto = _scan_pareto_dir_for_listing(pareto_dir)
         result_name = result_dir.name
-        mode = "unknown"
-        scenario_count = 0
-        if first_pareto:
-            try:
-                first_data = _load_pareto_json(first_pareto)
-                result_name = _result_name_from_data(first_data, result_dir.name)
-                mode, scenario_labels = _detect_pareto_mode(first_data)
-                scenario_count = len(scenario_labels)
-            except Exception:
-                result_name = result_dir.name
+        meta = _result_list_meta(first_pareto, result_name, pareto_count)
+        modified_source = all_results if all_results.exists() else result_dir
         results.append(
             {
                 "path": str(result_dir),
                 "result": result_dir.name,
-                "name": result_name,
-                "pareto_count": len(pareto_files),
-                "mode": mode,
-                "scenario_count": scenario_count,
-                "modified": datetime.datetime.fromtimestamp(result_dir.stat().st_mtime).isoformat(),
+                "name": meta["name"],
+                "pareto_count": pareto_count,
+                "mode": meta["mode"],
+                "scenario_count": meta["scenario_count"],
+                "modified": datetime.datetime.fromtimestamp(modified_source.stat().st_mtime).isoformat(),
             }
         )
-    return {"results": results}
+    return _api_cache_set("results:list", {"results": results})
 
 
 @router.get("/results/config")
@@ -2684,9 +2839,15 @@ def get_result_config(path: str, session: SessionToken = Depends(require_auth)):
     if not first_pareto:
         raise HTTPException(404, "No pareto config found for result")
     try:
+        stat = first_pareto.stat()
+        cache_key = f"result-config:{first_pareto.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+        cached = _api_cache_get(cache_key, _PARETO_FILE_CACHE_TTL)
+        if cached is not None:
+            return cached
         data = _load_pareto_json(first_pareto)
         cfg = _extract_config_from_pareto_data(data)
-        return _editor_config_payload(cfg, backend_hint=_infer_optimize_backend_hint(cfg))
+        payload = _editor_config_payload(cfg, backend_hint=_infer_optimize_backend_hint(cfg))
+        return _api_cache_set(cache_key, payload)
     except Exception as exc:
         raise HTTPException(500, f"Error reading pareto config: {exc}") from exc
 
@@ -2697,6 +2858,7 @@ def delete_result(path: str, session: SessionToken = Depends(require_auth)):
     if not result_dir.exists():
         raise HTTPException(404, "Result not found")
     rmtree(str(result_dir), ignore_errors=True)
+    _api_cache_clear("results", "result-meta", "result-config", "pareto-file")
     return {"ok": True}
 
 
@@ -2885,7 +3047,15 @@ def get_pareto_file(path: str, session: SessionToken = Depends(require_auth)):
     pareto_path = _ensure_pareto_path(path)
     if not pareto_path.exists():
         raise HTTPException(404, "Pareto file not found")
-    return _load_pareto_json(pareto_path)
+    try:
+        cache_key = _pareto_file_cache_key(pareto_path)
+        cached = _api_cache_get(cache_key, _PARETO_FILE_CACHE_TTL)
+        if cached is not None:
+            return cached
+        data = _load_pareto_json(pareto_path)
+        return _api_cache_set(cache_key, data)
+    except Exception as exc:
+        raise HTTPException(500, f"Error reading pareto file: {exc}") from exc
 
 
 @router.post("/paretos/seed-bundle")
